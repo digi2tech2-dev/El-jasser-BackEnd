@@ -11,6 +11,7 @@ const {
     PAYMENT_EVENT_MATCH_STATUS,
 } = require('./paymentEvent.model');
 const { parsePaymentSms, normalizePhone } = require('./paymentEvent.parser');
+const { getPaymentSettings } = require('../admin/admin.settings.service');
 
 const SYSTEM_ACTOR_ID = new mongoose.Types.ObjectId('000000000000000000000001');
 
@@ -59,7 +60,29 @@ const isVodafoneCashMethod = (value) => {
         || normalized === 'vodafonecash'
         || normalized === 'vfcash'
         || normalized.includes('vodafonecash')
-        || normalized.includes('vfcash');
+        || normalized.includes('vfcash')
+        || normalized.includes('فودافون');
+};
+
+const getVodafoneCashMethodIds = async () => {
+    const settings = await getPaymentSettings();
+    const ids = new Set();
+
+    for (const group of settings.paymentGroups || []) {
+        for (const method of group.methods || []) {
+            const token = `${method?.id || ''} ${method?.name || ''} ${method?.type || ''}`;
+            if (isVodafoneCashMethod(token)) {
+                ids.add(String(method.id || '').trim());
+            }
+        }
+    }
+
+    return ids;
+};
+
+const depositUsesVodafoneCash = (deposit, vodafoneMethodIds) => {
+    const id = String(deposit?.paymentMethodId || '').trim();
+    return isVodafoneCashMethod(id) || vodafoneMethodIds.has(id);
 };
 
 // transactionId is the canonical customer-facing deposit reference. The
@@ -171,7 +194,10 @@ const matchPaymentEvent = async (eventId) => {
         status: DEPOSIT_STATUS.PENDING,
         currency: { $in: ['EGP', 'EGY'] },
     });
-    const methodCandidates = deposits.filter((deposit) => isVodafoneCashMethod(deposit.paymentMethodId));
+    const vodafoneMethodIds = await getVodafoneCashMethodIds();
+    const methodCandidates = deposits.filter((deposit) =>
+        depositUsesVodafoneCash(deposit, vodafoneMethodIds)
+    );
     const transactionCandidates = methodCandidates.filter((deposit) => extractDepositTransactionId(deposit) === event.transactionId);
     const amountCandidates = transactionCandidates.filter((deposit) => sameAmount(deposit.requestedAmount, event.amount));
 
@@ -210,7 +236,13 @@ const matchPaymentEvent = async (eventId) => {
 
 const matchUnmatchedEventsForDeposit = async (depositId) => {
     const deposit = await DepositRequest.findById(depositId).select('status currency paymentMethodId');
-    if (!deposit || deposit.status !== DEPOSIT_STATUS.PENDING || !['EGP', 'EGY'].includes(deposit.currency) || !isVodafoneCashMethod(deposit.paymentMethodId)) return [];
+    const vodafoneMethodIds = await getVodafoneCashMethodIds();
+    if (
+        !deposit
+        || deposit.status !== DEPOSIT_STATUS.PENDING
+        || !['EGP', 'EGY'].includes(deposit.currency)
+        || !depositUsesVodafoneCash(deposit, vodafoneMethodIds)
+    ) return [];
     const events = await PaymentEvent.find({
         parseStatus: 'PARSED',
         matchStatus: { $in: [PAYMENT_EVENT_MATCH_STATUS.UNMATCHED, PAYMENT_EVENT_MATCH_STATUS.MISMATCH, PAYMENT_EVENT_MATCH_STATUS.AMBIGUOUS] },
