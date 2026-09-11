@@ -4,6 +4,12 @@ Production-oriented Node.js backend for a digital coins and digital-products sto
 
 The source of truth is the code under `src/`. This README documents the implementation inspected in this repository, including route mounts, models, jobs, scripts, environment variables, and operational constraints.
 
+## Canonical B2B API
+
+The public canonical base is `/client/api`; `/api/client/api` remains a legacy alias. Use `api-token` authentication (legacy `x-api-key` and Bearer headers remain accepted). Canonical integrations use numeric compatibility IDs and `POST /orders` with `product_id`, `qty`, `order_uuid`, and `params`. Check responses retain legacy fields and add `order_uuid`.
+
+`SAFE_LOCAL_PRODUCTION_MODE=true` is an overriding local safety switch: it suppresses default-setting seeding, fulfillment/provider jobs, WhatsApp initialization, and outbound email/WhatsApp notifications. It does not alter payment-event handling. Outside safe mode, `BACKGROUND_JOBS_ENABLED` and `WHATSAPP_AUTO_INIT` retain their existing behavior.
+
 Final release-gate notes, migration order, rollback guidance, and current blockers are tracked in [docs/production-readiness-review.md](docs/production-readiness-review.md).
 
 ## Application Overview

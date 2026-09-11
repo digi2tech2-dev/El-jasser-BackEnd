@@ -36,6 +36,15 @@ const providerSchema = new mongoose.Schema(
             lowercase: true,
         },
 
+        // Explicit registry key. Existing providers keep using slug/name when
+        // this optional field is absent.
+        adapterType: {
+            type: String,
+            trim: true,
+            lowercase: true,
+            default: null,
+        },
+
         /**
          * Base URL of the provider's API.
          * The adapter uses this as the root for all HTTP calls.

@@ -35,8 +35,10 @@ const { TorosfonAdapter } = require('./toros.adapter');
 const { AlkasrVipAdapter } = require('./alkasr.adapter');
 const { IbraAdapter } = require('./ibra.adapter');
 const { DealerApiAdapter } = require('./dealerApi.service');
+const { CanonicalB2BAdapter } = require('./canonicalB2B.adapter');
 
 const assertProductionAdapterAllowed = (AdapterClass, provider, { strict = false } = {}) => {
+    const byAdapterType = (provider.adapterType ?? '').toLowerCase().trim();
     const bySlug = (provider.slug ?? '').toLowerCase().trim();
     const byName = (provider.name ?? '').toLowerCase().trim();
 
@@ -45,13 +47,13 @@ const assertProductionAdapterAllowed = (AdapterClass, provider, { strict = false
         && (!AdapterClass || AdapterClass === MockProviderAdapter)
     ) {
         throw new Error(
-            `UNSUPPORTED_PROVIDER: Mock provider fallback is disabled in production for slug="${bySlug}" / name="${byName}".`
+            `UNSUPPORTED_PROVIDER: Mock provider fallback is disabled in production for adapterType="${byAdapterType}" / slug="${bySlug}" / name="${byName}".`
         );
     }
 
     if (!AdapterClass && strict) {
         throw new Error(
-            `UNSUPPORTED_PROVIDER: No adapter registered for slug="${bySlug}" / name="${byName}".`
+            `UNSUPPORTED_PROVIDER: No adapter registered for adapterType="${byAdapterType}" / slug="${bySlug}" / name="${byName}".`
         );
     }
 };
@@ -62,6 +64,7 @@ const assertProductionAdapterAllowed = (AdapterClass, provider, { strict = false
 // so the lookup works regardless of whether provider.slug is set.
 //
 const registry = new Map([
+    ['canonical-b2b', CanonicalB2BAdapter],
     // ── Royal Crown ──────────────────────────────────────────────────────────
     ['royal-crown', RoyalCrownAdapter],   // slug
     ['royal crown', RoyalCrownAdapter],   // name (lowercase)
@@ -196,10 +199,12 @@ const registry = new Map([
  * @returns {BaseProviderAdapter}
  */
 const getAdapter = (provider, adapterOptions = {}) => {
+    const byAdapterType = (provider.adapterType ?? '').toLowerCase().trim();
     const bySlug = (provider.slug ?? '').toLowerCase().trim();
     const byName = (provider.name ?? '').toLowerCase().trim();
 
-    const AdapterClass = registry.get(bySlug)
+    const AdapterClass = registry.get(byAdapterType)
+        ?? registry.get(bySlug)
         ?? registry.get(byName)
         ?? null;
 
@@ -220,10 +225,11 @@ const getAdapter = (provider, adapterOptions = {}) => {
  * @returns {BaseProviderAdapter}
  */
 const getProviderAdapter = (provider, options = {}) => {
+    const byAdapterType = (provider.adapterType ?? '').toLowerCase().trim();
     const bySlug = (provider.slug ?? '').toLowerCase().trim();
     const byName = (provider.name ?? '').toLowerCase().trim();
 
-    const AdapterClass = registry.get(bySlug) ?? registry.get(byName);
+    const AdapterClass = registry.get(byAdapterType) ?? registry.get(bySlug) ?? registry.get(byName);
 
     assertProductionAdapterAllowed(AdapterClass, provider, { strict: options.strict });
     if (!AdapterClass) return new MockProviderAdapter(provider, options);

@@ -133,6 +133,21 @@ describe('[1] Provider Model', () => {
         expect(p.syncInterval).toBe(60);
     });
 
+    it('persists normalized optional adapterType through provider CRUD', async () => {
+        const created = await providerService.createProvider({
+            name: `Canonical-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            baseUrl: 'https://upstream.example/client/api',
+            apiToken: 'test-only-token',
+            adapterType: 'CANONICAL-B2B',
+            syncInterval: 0,
+            isActive: true,
+        });
+        expect(created.adapterType).toBe('canonical-b2b');
+
+        const updated = await providerService.updateProvider(created._id, { adapterType: 'canonical-b2b' });
+        expect(updated.adapterType).toBe('canonical-b2b');
+    });
+
     it('rejects when name is missing', async () => {
         await expect(
             Provider.create({ baseUrl: 'https://example.com' })

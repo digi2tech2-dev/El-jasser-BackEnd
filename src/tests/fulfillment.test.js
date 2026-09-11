@@ -38,6 +38,7 @@ const makeMockProvider = (overrides = {}) => ({
     placeOrder: overrides.placeOrder ?? jest.fn(),
     checkOrder: overrides.checkOrder ?? jest.fn(),
     checkOrdersBatch: overrides.checkOrdersBatch ?? jest.fn().mockResolvedValue([]),
+    checkOrderByReference: overrides.checkOrderByReference,
     fetchProducts: overrides.fetchProducts ?? jest.fn().mockResolvedValue([]),
     getMyInfo: overrides.getMyInfo ?? jest.fn().mockResolvedValue({}),
 });
@@ -164,6 +165,34 @@ describe('[2] executeOrder -- provider cases', () => {
         expect(updated.status).toBe(ORDER_STATUS.PROCESSING);
         expect(updated.providerOrderId).toBe(9002);
         expect(updated.refunded).toBe(false);
+    });
+
+    it('passes the persisted local orderNumber as a stable provider reference', async () => {
+        const order = await makeOrderDoc(customer._id);
+        const provider = makeMockProvider({
+            placeOrder: jest.fn().mockResolvedValue({
+                success: true, providerOrderId: 9010, providerStatus: 'Pending', rawResponse: {}, errorMessage: null,
+            }),
+        });
+
+        await executeOrder(order._id, provider);
+        expect(provider.placeOrder).toHaveBeenCalledWith(expect.objectContaining({ referenceId: order.orderNumber }));
+    });
+
+    it('keeps uncertain placement funded and processing without an automatic refund', async () => {
+        const order = await makeOrderDoc(customer._id);
+        const provider = makeMockProvider({
+            placeOrder: jest.fn().mockResolvedValue({
+                success: true, providerOrderId: null, providerStatus: 'PLACEMENT_UNCERTAIN', rawResponse: { placement: 'uncertain' }, errorMessage: null,
+            }),
+        });
+
+        const { order: updated, refunded } = await executeOrder(order._id, provider);
+        expect(updated.status).toBe(ORDER_STATUS.PROCESSING);
+        expect(updated.providerStatus).toBe('PLACEMENT_UNCERTAIN');
+        expect(updated.providerOrderId).toBeNull();
+        expect(updated.refunded).toBe(false);
+        expect(refunded).toBe(false);
     });
 
     it('Case C: success=true + Cancelled -> CANCELED + wallet refunded', async () => {
@@ -537,6 +566,43 @@ describe('[5] pollProcessingOrders -- cron batch', () => {
 
         const fresh = await Order.findById(order._id);
         expect(fresh.status).toBe(ORDER_STATUS.PROCESSING);
+    });
+
+    it('recovers an uncertain placement by orderNumber and then applies normal status handling', async () => {
+        const order = await makeOrderDoc(customer._id, {
+            providerOrderId: null,
+            providerStatus: 'PLACEMENT_UNCERTAIN',
+            idempotencyKey: 'uncertain-recovery',
+        });
+        const provider = makeMockProvider({
+            checkOrderByReference: jest.fn().mockResolvedValue({
+                found: true, providerOrderId: 'remote-recovered', providerStatus: 'Completed', rawResponse: { status: 'accept' },
+            }),
+        });
+
+        const stats = await pollProcessingOrders(provider);
+        const fresh = await Order.findById(order._id);
+        expect(provider.checkOrderByReference).toHaveBeenCalledWith(order.orderNumber);
+        expect(fresh.providerOrderId).toBe('remote-recovered');
+        expect(fresh.status).toBe(ORDER_STATUS.COMPLETED);
+        expect(fresh.refunded).toBe(false);
+        expect(stats.completed).toBe(1);
+    });
+
+    it('moves unrecovered uncertain placement to manual review without refund at retry exhaustion', async () => {
+        const order = await makeOrderDoc(customer._id, {
+            providerOrderId: null,
+            providerStatus: 'PLACEMENT_UNCERTAIN',
+            retryCount: MAX_RETRY_COUNT - 1,
+            idempotencyKey: 'uncertain-manual-review',
+        });
+        const provider = makeMockProvider({ checkOrderByReference: jest.fn().mockResolvedValue({ found: false }) });
+
+        const stats = await pollProcessingOrders(provider);
+        const fresh = await Order.findById(order._id);
+        expect(fresh.status).toBe(ORDER_STATUS.MANUAL_REVIEW);
+        expect(fresh.refunded).toBe(false);
+        expect(stats.manualReview).toBe(1);
     });
 });
 

@@ -27,6 +27,9 @@ const DEFAULT_RECEIPT_OCR_KEYWORDS = [
 const config = {
     env: process.env.NODE_ENV || 'development',
     port: parseInt(process.env.PORT, 10) || 5000,
+    // Deliberately strict: only the literal string "true" enables this mode.
+    // This is a safety switch for local inspection against production-like data.
+    safeLocalProductionMode: process.env.SAFE_LOCAL_PRODUCTION_MODE === 'true',
 
     db: {
         uri: process.env.MONGO_URI,

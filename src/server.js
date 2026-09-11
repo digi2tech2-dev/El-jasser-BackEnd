@@ -12,13 +12,21 @@ const whatsappService = require('./modules/whatsapp/whatsapp.service');
 const isExplicitlyDisabled = (value) => String(value || '').trim().toLowerCase() === 'false';
 
 
-const startServer = async () => {
+const startServer = async ({
+    appInstance = app,
+    connectDatabase = connectDB,
+    fulfillment = fulfillmentJob,
+    providerSync = syncProvidersJob,
+    whatsapp = whatsappService,
+    registerProcessHandlers = true,
+    exitOnFailure = true,
+} = {}) => {
     try {
         // 1. Connect to MongoDB first
-        await connectDB();
+        await connectDatabase();
 
         // 2. Then start listening
-        const server = app.listen(config.port, () => {
+        const server = appInstance.listen(config.port, () => {
             console.log('');
             console.log('═══════════════════════════════════════════════════════');
             console.log(`  🚀  KA API`);
@@ -29,20 +37,26 @@ const startServer = async () => {
             console.log('');
         });
 
-        // 3. Start background cron jobs (skipped in test env)
-        if (!isExplicitlyDisabled(process.env.BACKGROUND_JOBS_ENABLED)) {
-            fulfillmentJob.start();
-            syncProvidersJob.start();
+        // Safe local mode overrides all legacy startup controls. Outside that
+        // mode, preserve the existing BACKGROUND_JOBS_ENABLED and
+        // WHATSAPP_AUTO_INIT behavior unchanged.
+        if (config.safeLocalProductionMode) {
+            console.warn('[Startup] SAFE_LOCAL_PRODUCTION_MODE=true: jobs and WhatsApp initialization are disabled.');
         } else {
-            console.log('[Startup] Background jobs are disabled by BACKGROUND_JOBS_ENABLED=false.');
-        }
+            if (!isExplicitlyDisabled(process.env.BACKGROUND_JOBS_ENABLED)) {
+                fulfillment.start();
+                providerSync.start();
+            } else {
+                console.log('[Startup] Background jobs are disabled by BACKGROUND_JOBS_ENABLED=false.');
+            }
 
-        if (!isExplicitlyDisabled(process.env.WHATSAPP_AUTO_INIT)) {
-            whatsappService.initializeWhatsAppClient().catch((err) => {
-                console.error('[WhatsApp] startup initialization failed:', err.message);
-            });
-        } else {
-            console.log('[Startup] WhatsApp auto-init is disabled by WHATSAPP_AUTO_INIT=false.');
+            if (!isExplicitlyDisabled(process.env.WHATSAPP_AUTO_INIT)) {
+                whatsapp.initializeWhatsAppClient().catch((err) => {
+                    console.error('[WhatsApp] startup initialization failed:', err.message);
+                });
+            } else {
+                console.log('[Startup] WhatsApp auto-init is disabled by WHATSAPP_AUTO_INIT=false.');
+            }
         }
 
         if (typeof process.send === 'function') {
@@ -54,9 +68,9 @@ const startServer = async () => {
             console.log(`\n⚠️  Received ${signal}. Shutting down gracefully...`);
 
             // Stop both cron jobs before closing HTTP
-            fulfillmentJob.stop();
-            syncProvidersJob.stop();
-            whatsappService.destroyWhatsAppClient().catch((err) => {
+            fulfillment.stop();
+            providerSync.stop();
+            whatsapp.destroyWhatsAppClient().catch((err) => {
                 console.warn('[WhatsApp] shutdown cleanup failed:', err.message);
             });
 
@@ -75,25 +89,32 @@ const startServer = async () => {
             }, 10_000);
         };
 
-        process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-        process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+        if (registerProcessHandlers) {
+            process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+            process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-        // ── Unhandled Rejections / Exceptions ─────────────────────────────────────
-        process.on('unhandledRejection', (reason) => {
-            console.error('💥 Unhandled Promise Rejection:', reason);
-            gracefulShutdown('unhandledRejection');
-        });
+            // ── Unhandled Rejections / Exceptions ─────────────────────────────────
+            process.on('unhandledRejection', (reason) => {
+                console.error('💥 Unhandled Promise Rejection:', reason);
+                gracefulShutdown('unhandledRejection');
+            });
 
-        process.on('uncaughtException', (error) => {
-            console.error('💥 Uncaught Exception:', error);
-            process.exit(1);
-        });
+            process.on('uncaughtException', (error) => {
+                console.error('💥 Uncaught Exception:', error);
+                process.exit(1);
+            });
+        }
 
         return server;
     } catch (error) {
         console.error('❌ Failed to start server:', error.message);
-        process.exit(1);
+        if (exitOnFailure) process.exit(1);
+        throw error;
     }
 };
 
-startServer();
+if (require.main === module) {
+    startServer();
+}
+
+module.exports = { startServer };
