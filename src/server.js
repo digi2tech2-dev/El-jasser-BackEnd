@@ -64,29 +64,40 @@ const startServer = async ({
         }
 
         // ── Graceful Shutdown ─────────────────────────────────────────────────────
-        const gracefulShutdown = (signal) => {
+        let shutdownInProgress = false;
+
+        const gracefulShutdown = async (signal) => {
+            if (shutdownInProgress) return;
+            shutdownInProgress = true;
+
             console.log(`\n⚠️  Received ${signal}. Shutting down gracefully...`);
+
+            // Arm the timeout before async cleanup so a stuck browser
+            // cannot keep the process alive forever.
+            const forceExitTimer = setTimeout(() => {
+                console.error('❌ Graceful shutdown timed out. Forcing exit.');
+                process.exit(1);
+            }, 10_000);
 
             // Stop both cron jobs before closing HTTP
             fulfillment.stop();
             providerSync.stop();
-            whatsapp.destroyWhatsAppClient().catch((err) => {
+
+            // Wait for Chromium to close before allowing this process to exit.
+            try {
+                await whatsapp.destroyWhatsAppClient();
+            } catch (err) {
                 console.warn('[WhatsApp] shutdown cleanup failed:', err.message);
-            });
+            }
 
             server.close(async () => {
                 console.log('✅ HTTP server closed.');
                 const mongoose = require('mongoose');
                 await mongoose.connection.close();
                 console.log('✅ MongoDB connection closed.');
+                clearTimeout(forceExitTimer);
                 process.exit(0);
             });
-
-            // Force exit after 10s if graceful shutdown stalls
-            setTimeout(() => {
-                console.error('❌ Graceful shutdown timed out. Forcing exit.');
-                process.exit(1);
-            }, 10_000);
         };
 
         if (registerProcessHandlers) {

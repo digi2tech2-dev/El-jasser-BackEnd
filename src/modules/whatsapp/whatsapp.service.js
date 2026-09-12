@@ -121,12 +121,25 @@ const attachClientEvents = (nextClient) => {
     });
 
     nextClient.on('disconnected', (reason) => {
+        // Ignore stale disconnect events from an older client instance.
+        if (client !== nextClient) return;
+
         currentQrCode = null;
         client = null;
         setLastError(reason ? new Error(String(reason)) : null);
         setState(WHATSAPP_STATE.DISCONNECTED);
         console.warn('[WhatsApp] disconnected:', reason || 'unknown reason');
-        scheduleReconnect();
+
+        // Close the old Puppeteer/Chromium instance before starting another
+        // client with the same LocalAuth userDataDir.
+        Promise.resolve()
+            .then(() => nextClient.destroy())
+            .catch((err) => {
+                console.warn('[WhatsApp] disconnected client cleanup failed:', err.message);
+            })
+            .finally(() => {
+                scheduleReconnect();
+            });
     });
 };
 
@@ -191,6 +204,7 @@ const initializeWhatsAppClient = async ({ force = false } = {}) => {
     if (client && !force) return getStatus();
 
     const operationId = ++lifecycleOperationId;
+    let shouldReconnect = false;
     isInitializing = true;
     currentQrCode = null;
     setLastError(null);
@@ -208,17 +222,35 @@ const initializeWhatsAppClient = async ({ force = false } = {}) => {
         await client.initialize();
         return getStatus();
     } catch (err) {
+        const failedClient = client;
+
         if (operationId === lifecycleOperationId) {
             client = null;
             currentQrCode = null;
             setLastError(err);
             setState(WHATSAPP_STATE.ERROR);
+            shouldReconnect = true;
         }
+
+        // initialize() may fail after Chromium has already started.
+        // Destroy that instance before retrying so LocalAuth is not locked.
+        if (failedClient) {
+            try {
+                await failedClient.destroy();
+            } catch (cleanupErr) {
+                console.warn('[WhatsApp] failed initialization cleanup failed:', cleanupErr.message);
+            }
+        }
+
         console.error('[WhatsApp] initialization failed:', err.message);
         return getStatus();
     } finally {
         if (operationId === lifecycleOperationId) {
             isInitializing = false;
+
+            if (shouldReconnect) {
+                scheduleReconnect();
+            }
         }
     }
 };
