@@ -153,10 +153,15 @@ const registry = new Map([
     ['alfaore-store', AlkasrVipAdapter], // slug
     ['alfaore store', AlkasrVipAdapter], // name
     ['alfaorestore', AlkasrVipAdapter],  // compact
+
     // ── top1 store (Uses Alkasr Adapter) ─────────────────────────────────────
     ['top1-store', AlkasrVipAdapter], // slug
     ['top1 store', AlkasrVipAdapter], // name
     ['top1store', AlkasrVipAdapter],  // compact
+    // ── alobai card (Uses Alkasr Adapter) ─────────────────────────────────────
+    ['alobai-card', AlkasrVipAdapter], // slug
+    ['alobai card', AlkasrVipAdapter], // name
+    ['alobaicard', AlkasrVipAdapter],  // compact
 
 
     // -- Ibra Store ------------------------------------------------------------
