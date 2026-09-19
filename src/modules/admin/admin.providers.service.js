@@ -78,10 +78,11 @@ const updateProvider = async (id, data, adminId) => {
     if (!provider) throw new NotFoundError('Provider');
 
     const before = redactProviderForAudit(provider);
-    const { name, slug, baseUrl, apiToken, isActive, syncInterval, supportedFeatures } = data;
+    const { name, slug, adapterType, baseUrl, apiToken, isActive, syncInterval, supportedFeatures } = data;
 
     if (name !== undefined) provider.name = name;
     if (slug !== undefined) provider.slug = slug;
+    if (adapterType !== undefined) provider.adapterType = adapterType;
     if (baseUrl !== undefined) provider.baseUrl = baseUrl;
     if (apiToken !== undefined && !isRedactedTokenPlaceholder(apiToken)) provider.apiToken = apiToken;
     if (isActive !== undefined) provider.isActive = isActive;

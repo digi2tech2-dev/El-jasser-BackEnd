@@ -138,6 +138,23 @@ describe('production compatibility contracts', () => {
         await expect(Provider.findById(created._id).then((provider) => provider.apiToken)).resolves.toBe('new-provider-token');
     });
 
+    test('admin provider create and edit preserve Canonical adapterType without exposing its token', async () => {
+        const admin = await createAdmin();
+        const created = await adminProvidersService.createProvider({
+            name: 'Canonical Admin Provider', slug: 'arbitrary-provider-slug',
+            adapterType: 'canonical-b2b', baseUrl: 'https://upstream.example/client/api', apiToken: 'test-token',
+        }, admin._id);
+
+        expect(created).toMatchObject({ adapterType: 'canonical-b2b', hasApiToken: true });
+        expect(created.apiToken).toBeUndefined();
+
+        const updated = await adminProvidersService.updateProvider(created._id, {
+            adapterType: 'CANONICAL-B2B',
+        }, admin._id);
+        expect(updated.adapterType).toBe('canonical-b2b');
+        await expect(Provider.findById(created._id).then((provider) => provider.adapterType)).resolves.toBe('canonical-b2b');
+    });
+
     test('production provider adapter resolution fails closed instead of using mock fallback', () => {
         const previousNodeEnv = process.env.NODE_ENV;
         process.env.NODE_ENV = 'production';

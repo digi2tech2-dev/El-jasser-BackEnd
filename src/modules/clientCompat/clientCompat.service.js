@@ -6,7 +6,6 @@ const { Category } = require('../categories/category.model');
 const { Order } = require('../orders/order.model');
 const orderService = require('../orders/order.service');
 const { calculateFinalPrice } = require('../orders/pricing.service');
-const { convertUsdToUserCurrency } = require('../../services/currencyConverter.service');
 const { getNextSequence } = require('../orders/counter.model');
 const { ClientCompatError, ERROR_CODES } = require('./clientCompat.errors');
 const {
@@ -152,13 +151,13 @@ const buildCategoryMaps = (categories) => {
 const priceProduct = async (product, reseller) => {
     const percentage = Number(reseller.groupId?.percentage || 0);
     const priceUsd = calculateFinalPrice(product.basePrice, percentage);
-    const userCurrency = String(reseller.currency || 'USD').toUpperCase();
-    const converted = await convertUsdToUserCurrency(Number(priceUsd), userCurrency);
 
     return {
         priceUsd,
-        price: Number(converted.finalAmount),
-        currency: userCurrency,
+        // Canonical product prices are always the USD reseller sale price.
+        // Wallet/profile currency remains independent from this catalog contract.
+        price: Number(priceUsd),
+        currency: 'USD',
     };
 };
 
