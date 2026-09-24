@@ -46,6 +46,7 @@ const {
     buildReferralAssignment,
     createUserWithReferralCodeRetry,
 } = require('../referrals/referral.service');
+const { normalizePhone } = require('../../shared/utils/phone');
 
 // ─── Private Helpers ──────────────────────────────────────────────────────────
 
@@ -174,6 +175,11 @@ const register = async ({
     ref,
     inviteCode,
 }) => {
+    // HTTP registration validation requires phone. Keep this service tolerant
+    // of direct internal callers so legacy scripts/tests do not create a
+    // schema-level compatibility hazard; any supplied value is still strict.
+    const normalizedPhone = normalizePhone(phone);
+
     // ── 1. Prevent duplicate accounts ─────────────────────────────────────────
     const normalizedReferralCode = normalizeIncomingReferralCode(referralCode, refCode, ref, inviteCode);
     const existing = await User.findOne({ email: email.toLowerCase() });
@@ -219,7 +225,7 @@ const register = async ({
         profileCompletedAt: new Date(),
         currency: normalizedCurrency,
         ...(normalizedCountry ? { country: normalizedCountry } : {}),
-        ...(phone ? { phone } : {}),
+        ...(normalizedPhone ? { phone: normalizedPhone } : {}),
         ...(username ? { username } : {}),
         ...buildReferralAssignment(referralOwner),
     });
@@ -474,9 +480,13 @@ const loginWithGoogle = async (user) => {
 
     if (user.profileCompletionRequired) {
         const completionToken = await issueGoogleProfileCompletionToken(user);
+        const missingProfileFields = user.profileCompletedAt
+            ? user.missingProfileFields
+            : [...new Set(['country', 'currency', ...user.missingProfileFields])];
         return {
             status: 'PROFILE_COMPLETION_REQUIRED',
             completionToken,
+            missingProfileFields,
             user: user.toSafeObject(),
             message: 'Profile completion is required.',
         };
@@ -496,7 +506,7 @@ const loginWithGoogle = async (user) => {
     return { status: 'LOGIN_COMPLETE', token, user: user.toSafeObject() };
 };
 
-const completeGoogleProfile = async ({ completionToken, country, currency }) => {
+const completeGoogleProfile = async ({ completionToken, country, currency, phone }) => {
     if (!completionToken) {
         throw new AuthenticationError('Profile completion token is required.');
     }
@@ -526,12 +536,33 @@ const completeGoogleProfile = async ({ completionToken, country, currency }) => 
 
     await _assertActiveGroup(user.groupId);
 
-    user.country = _normalizeCountry(country);
-    if (!user.country) {
-        throw new AppError('Country is required.', 400, 'COUNTRY_INVALID');
+    // A newly-created Google account retains the existing country/currency
+    // onboarding requirement. A legacy account with those fields already set
+    // only supplies its genuinely missing field(s), such as phone.
+    const requiredFields = user.profileCompletedAt
+        ? user.missingProfileFields
+        : [...new Set(['country', 'currency', ...user.missingProfileFields])];
+
+    if (requiredFields.includes('country')) {
+        user.country = _normalizeCountry(country);
+        if (!user.country) {
+            throw new AppError('Country is required.', 400, 'COUNTRY_INVALID');
+        }
+    } else if (country !== undefined && country !== null && String(country).trim() !== '') {
+        user.country = _normalizeCountry(country);
     }
 
-    user.currency = await _normalizeCurrency(currency, { required: true });
+    if (requiredFields.includes('currency')) {
+        user.currency = await _normalizeCurrency(currency, { required: true });
+    } else if (currency !== undefined && currency !== null && String(currency).trim() !== '') {
+        user.currency = await _normalizeCurrency(currency);
+    }
+
+    user.phone = normalizePhone(phone, { required: true });
+
+    if (user.profileCompletionRequired) {
+        throw new AppError('Profile completion data is incomplete.', 400, 'PROFILE_INCOMPLETE');
+    }
 
     user.profileCompletedAt = new Date();
     user.profileCompletionToken = null;

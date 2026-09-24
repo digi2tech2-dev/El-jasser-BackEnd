@@ -112,6 +112,9 @@ const googleCallback = catchAsync(async (req, res) => {
             status: 'PROFILE_COMPLETION_REQUIRED',
             completionToken: result.completionToken,
         });
+        if (result.missingProfileFields?.length) {
+            params.set('missingFields', result.missingProfileFields.join(','));
+        }
         return res.redirect(`${frontendBase}/auth?${params.toString()}`);
     }
 
@@ -126,8 +129,8 @@ const googleCallback = catchAsync(async (req, res) => {
 });
 
 const completeGoogleProfile = catchAsync(async (req, res) => {
-    const { completionToken, country, currency } = req.body;
-    const result = await authService.completeGoogleProfile({ completionToken, country, currency });
+    const { completionToken, country, currency, phone } = req.body;
+    const result = await authService.completeGoogleProfile({ completionToken, country, currency, phone });
     sendSuccess(res, result, 'Profile completed successfully.');
 });
 

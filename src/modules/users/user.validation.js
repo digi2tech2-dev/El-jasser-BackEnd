@@ -1,6 +1,7 @@
 'use strict';
 
 const { body } = require('express-validator');
+const { normalizePhone } = require('../../shared/utils/phone');
 
 const updateUserValidation = [
     body('name')
@@ -42,8 +43,13 @@ const updateMyProfileValidation = [
 
     body('phone')
         .optional()
-        .trim()
-        .isLength({ max: 30 }),
+        .custom((value) => {
+            // A customer attempting to clear this field is rejected by the
+            // service, where the user's role is available.
+            if (value === null || String(value).trim() === '') return true;
+            normalizePhone(value);
+            return true;
+        }),
 
     body('username')
         .optional()

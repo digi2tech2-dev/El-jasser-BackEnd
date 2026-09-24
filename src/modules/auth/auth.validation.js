@@ -1,6 +1,12 @@
 'use strict';
 
 const { body } = require('express-validator');
+const { normalizePhone } = require('../../shared/utils/phone');
+
+const validPhone = ({ required = false } = {}) => (value) => {
+    normalizePhone(value, { required });
+    return true;
+};
 
 const registerValidation = [
     body('name')
@@ -31,9 +37,7 @@ const registerValidation = [
         .isLength({ min: 2, max: 2 }).withMessage('Country code must be 2 characters'),
 
     body('phone')
-        .optional()
-        .trim()
-        .isLength({ max: 30 }),
+        .custom(validPhone({ required: true })),
 
     body('username')
         .optional()
@@ -92,14 +96,17 @@ const completeGoogleProfileValidation = [
         .isString().withMessage('Profile completion token must be a string'),
 
     body('country')
+        .optional({ checkFalsy: true })
         .trim()
-        .notEmpty().withMessage('Country is required')
         .isLength({ min: 2, max: 2 }).withMessage('Country code must be 2 characters'),
 
     body('currency')
+        .optional({ checkFalsy: true })
         .trim()
-        .notEmpty().withMessage('Currency is required')
         .isLength({ min: 3, max: 3 }).withMessage('Currency code must be 3 characters'),
+
+    body('phone')
+        .custom(validPhone({ required: true })),
 ];
 
 module.exports = {

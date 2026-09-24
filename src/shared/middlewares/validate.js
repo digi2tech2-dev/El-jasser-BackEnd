@@ -13,7 +13,7 @@ const validate = (req, res, next) => {
         const formatted = errors.array().map((err) => ({
             field: err.path || err.param,
             message: err.msg,
-            value: err.value,
+            value: /phone/i.test(err.path || err.param || '') ? '[REDACTED]' : err.value,
         }));
         console.log('[VALIDATION_FAILED]', req.method, req.originalUrl, JSON.stringify(formatted, null, 2));
         throw new ValidationError('Request validation failed', formatted);

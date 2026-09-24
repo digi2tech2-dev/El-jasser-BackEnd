@@ -5,6 +5,7 @@ const userController = require('./user.controller');
 const { updateUserValidation, updateMyProfileValidation } = require('./user.validation');
 const validate = require('../../shared/middlewares/validate');
 const authenticate = require('../../shared/middlewares/authenticate');
+const { authenticateAllowIncompleteProfile } = require('../../shared/middlewares/authenticate');
 const authorize = require('../../shared/middlewares/authorize');
 const requirePermission = require('../../shared/middlewares/requirePermission');
 const { createUpload } = require('../../shared/middlewares/upload');
@@ -13,9 +14,6 @@ const avatarUpload = createUpload('avatars');
 
 const router = Router();
 
-// All user routes require authentication
-router.use(authenticate);
-
 // ── Customer: Self-service ────────────────────────────────────────────────────
 
 /**
@@ -23,14 +21,18 @@ router.use(authenticate);
  * @desc   Get authenticated user's own profile
  * @access Any authenticated user
  */
-router.get('/me', userController.getMyProfile);
+router.get('/me', authenticateAllowIncompleteProfile, userController.getMyProfile);
 
 /**
  * @route  PATCH /api/users/me
  * @desc   Update own profile (name, email, phone, username, password)
  * @access Any authenticated user
  */
-router.patch('/me', updateMyProfileValidation, validate, userController.updateMyProfile);
+router.patch('/me', authenticateAllowIncompleteProfile, updateMyProfileValidation, validate, userController.updateMyProfile);
+
+// All remaining user routes require both authentication and a complete customer
+// profile. /me above remains available so a legacy customer can complete phone.
+router.use(authenticate);
 
 /**
  * @route  PATCH /api/users/me/avatar

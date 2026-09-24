@@ -630,6 +630,7 @@ describe('Google profile completion', () => {
             googleId: 'existing-complete-google',
             country: 'EG',
             currency: 'USD',
+            phone: '01012345678',
             profileCompletedAt: new Date(),
         });
 
@@ -678,6 +679,7 @@ describe('Google profile completion', () => {
             completionToken: callbackResult.completionToken,
             country: 'eg',
             currency: 'usd',
+            phone: '01012345678',
         });
 
         expect(completed.status).toBe('LOGIN_COMPLETE');
@@ -723,6 +725,7 @@ describe('Google profile completion', () => {
             completionToken: reusedResult.completionToken,
             country: 'EG',
             currency: 'USD',
+            phone: '01012345678',
         });
         await expect(completeGoogleProfile({
             completionToken: reusedResult.completionToken,

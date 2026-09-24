@@ -6,6 +6,7 @@ const { AuthenticationError } = require('../errors/AppError');
 const catchAsync = require('../utils/catchAsync');
 const { User, USER_STATUS } = require('../../modules/users/user.model');
 const { ACTOR_ROLES } = require('../../modules/audit/audit.constants');
+const { assertCompleteProfile } = require('./requireCompleteProfile');
 
 /**
  * Verifies the JWT in the Authorization header.
@@ -16,7 +17,7 @@ const { ACTOR_ROLES } = require('../../modules/audit/audit.constants');
  *   PENDING and REJECTED users receive 401 Unauthorized.
  *   (Business routes additionally use requireActiveUser for defence-in-depth.)
  */
-const authenticate = catchAsync(async (req, res, next) => {
+const buildAuthenticate = ({ allowIncompleteProfile = false } = {}) => catchAsync(async (req, res, next) => {
     // 1. Extract token
     let token;
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
@@ -51,11 +52,7 @@ const authenticate = catchAsync(async (req, res, next) => {
         );
     }
 
-    if (currentUser.profileCompletionRequired) {
-        throw new AuthenticationError(
-            'Profile completion is required before accessing the platform.'
-        );
-    }
+    if (!allowIncompleteProfile) assertCompleteProfile(currentUser);
 
     // 5. Attach to request
     req.user = currentUser;
@@ -78,4 +75,8 @@ const authenticate = catchAsync(async (req, res, next) => {
     next();
 });
 
+const authenticate = buildAuthenticate();
+const authenticateAllowIncompleteProfile = buildAuthenticate({ allowIncompleteProfile: true });
+
 module.exports = authenticate;
+module.exports.authenticateAllowIncompleteProfile = authenticateAllowIncompleteProfile;

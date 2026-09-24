@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const config = require('../../config/config');
 const { generateReferralCode } = require('../../shared/utils/referralCode');
 const { buildPublicWalletSummary, buildWalletSummary } = require('../../shared/utils/walletSummary');
+const { normalizePhone, isValidPhone } = require('../../shared/utils/phone');
 
 /**
  * User roles enum — single source of truth.
@@ -56,6 +57,18 @@ const userSchema = new mongoose.Schema(
             lowercase: true,
             trim: true,
             match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email address'],
+        },
+
+        /**
+         * Optional at schema level for legacy-account compatibility. New customer
+         * entry points enforce it; existing documents may remain null until their
+         * one-time completion flow succeeds.
+         */
+        phone: {
+            type: String,
+            trim: true,
+            default: null,
+            set: (value) => normalizePhone(value),
         },
 
         referralCode: {
@@ -478,22 +491,18 @@ userSchema.virtual('quantityRemaining').get(function () {
 
 userSchema.virtual('missingProfileFields').get(function () {
     const missing = [];
-    if (!this.country) missing.push('country');
-    if (!this.currency) missing.push('currency');
+    if (this.role === ROLES.CUSTOMER && !isValidPhone(this.phone)) missing.push('phone');
+    if (this.googleId && !this.country) missing.push('country');
+    if (this.googleId && !this.currency) missing.push('currency');
     return missing;
 });
 
 userSchema.virtual('isProfileComplete').get(function () {
-    if (this.profileCompletedAt) return true;
-    if (!this.googleId) return true;
-
-    // Legacy Google users created before profileCompletedAt existed should keep
-    // access when they already have the required fields.
     return this.missingProfileFields.length === 0;
 });
 
 userSchema.virtual('profileCompletionRequired').get(function () {
-    return Boolean(this.googleId && !this.isProfileComplete);
+    return Boolean(this.role === ROLES.CUSTOMER && !this.isProfileComplete);
 });
 
 // ─── Pre-save Hook: Hash Password ────────────────────────────────────────────

@@ -8,6 +8,7 @@ const { AppError, NotFoundError, ConflictError, BusinessRuleError } = require('.
 const { createAuditLog } = require('../audit/audit.service');
 const { USER_ACTIONS, ENTITY_TYPES, ACTOR_ROLES } = require('../audit/audit.constants');
 const { notifyAccountApproved } = require('../notifications/notification.service');
+const { normalizePhone } = require('../../shared/utils/phone');
 const {
     normalizeIncomingReferralCode,
     resolveReferralOwnerForNewUser,
@@ -270,7 +271,13 @@ const updateMyProfile = async (userId, {
 
     if (name !== undefined) user.name = name;
     if (email !== undefined) user.email = email;
-    if (phone !== undefined) user.phone = phone;
+    if (phone !== undefined) {
+        const normalizedPhone = normalizePhone(phone);
+        if (user.role === ROLES.CUSTOMER && !normalizedPhone) {
+            throw new AppError('Phone number cannot be removed from a customer profile.', 400, 'PHONE_REQUIRED');
+        }
+        user.phone = normalizedPhone;
+    }
     if (username !== undefined) user.username = username;
 
     if (country !== undefined) {

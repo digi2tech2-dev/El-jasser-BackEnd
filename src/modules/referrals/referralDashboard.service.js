@@ -75,7 +75,6 @@ const safeUserSummary = (user) => {
         id: user._id?.toString?.() || user.id || null,
         name: user.name || null,
         email: user.email || null,
-        phone: user.phone || null,
         avatar: user.avatar || null,
         country: user.country || null,
         currency: normalizeCurrencyCode(user.currency),
@@ -131,7 +130,7 @@ const getCustomerReferralDashboard = async (userId, { limit = 50 } = {}) => {
     const [user, invitedUsers, commissions, payouts] = await Promise.all([
         User.findById(userId).select('name email avatar referralCode currency resellerStatus resellerApprovedAt referralCommissionStoppedAt groupId').populate('groupId', 'name percentage billingMode isActive').lean(),
         User.find({ referredBy: userId, deletedAt: null })
-            .select('name email phone avatar country currency status createdAt referredAt referralEligibleUntil')
+            .select('name email avatar country currency status createdAt referredAt referralEligibleUntil')
             .sort({ referredAt: -1, createdAt: -1 })
             .limit(safeLimit)
             .lean(),
