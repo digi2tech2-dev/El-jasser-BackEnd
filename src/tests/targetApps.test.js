@@ -25,6 +25,7 @@ const { invalidateSettingsCache } = require('../modules/admin/admin.settings.ser
 const notificationSvc = require('../modules/notifications/notification.service');
 const { schemas: targetSchemas } = require('../modules/targets/target.validation');
 const { TARGET_ORDER_ACTIONS, ACTOR_ROLES } = require('../modules/audit/audit.constants');
+const { validateUploadedFileSignature } = require('../shared/middlewares/upload');
 
 const flushAudit = () => new Promise((resolve) => setTimeout(resolve, 100));
 const uploadsDir = path.resolve(__dirname, '../../uploads/targets');
@@ -653,7 +654,9 @@ describe('Target app purchasing', () => {
             screenshotProof: 'uploads/targets/proof.png',
         });
 
-        await targetSvc.approveTargetOrder(order._id, admin._id);
+        await targetSvc.approveTargetOrder(order._id, admin._id, {
+            adminPaymentProof: 'uploads/targets/admin-payment-proof.png',
+        });
         await expect(targetSvc.rejectTargetOrder(order._id, admin._id)).rejects.toMatchObject({
             code: 'TARGET_ORDER_ALREADY_APPROVED',
         });
@@ -686,7 +689,10 @@ describe('Target app purchasing', () => {
         await targetSvc.approveTargetOrder(
             approvalOrder._id,
             supervisor._id,
-            { actorId: supervisor._id, actorRole: ACTOR_ROLES.SUPERVISOR }
+            {
+                adminPaymentProof: 'uploads/targets/admin-payment-proof-audit.png',
+                auditContext: { actorId: supervisor._id, actorRole: ACTOR_ROLES.SUPERVISOR },
+            }
         );
 
         const rejectionOrder = await targetSvc.createTargetOrder({
@@ -723,9 +729,169 @@ describe('Target app purchasing', () => {
         expect(approveLog).not.toBeNull();
         expect(approveLog.actorId.toString()).toBe(supervisor._id.toString());
         expect(approveLog.actorRole).toBe(ACTOR_ROLES.SUPERVISOR);
+        expect(approveLog.metadata.adminPaymentProofAttached).toBe(true);
+        expect(approveLog.metadata.adminPaymentProof).toBe('uploads/targets/admin-payment-proof-audit.png');
 
         expect(rejectLog).not.toBeNull();
         expect(rejectLog.actorId.toString()).toBe(supervisor._id.toString());
         expect(rejectLog.actorRole).toBe(ACTOR_ROLES.SUPERVISOR);
+    });
+
+    test('requires separate admin payment proof, preserves customer proof, and records approval audit fields', async () => {
+        const { customer } = await createCustomerWithGroup();
+        const admin = await createAdmin();
+        const app = await targetSvc.createTargetApp({
+            name: 'Payment Proof App',
+            unitPrice: 2,
+            targetAccountId: 'payment-proof-target-account',
+            allowedPaymentMethods: ['instapay'],
+        });
+        const order = await targetSvc.createTargetOrder({
+            userId: customer._id,
+            appId: app._id,
+            coinAmount: 5,
+            senderId: 'proof-customer',
+            transferNumber: '01000000011',
+            transactionNumber: 'proof-txn-1',
+            paymentMethod: 'InstaPay',
+            screenshotProof: 'uploads/targets/customer-proof.png',
+        });
+
+        await expect(targetSvc.approveTargetOrder(order._id, admin._id)).rejects.toMatchObject({
+            code: 'TARGET_ADMIN_PAYMENT_PROOF_REQUIRED',
+        });
+        await expect(TargetOrder.findById(order._id).then((saved) => saved.status)).resolves.toBe(TARGET_ORDER_STATUS.PENDING);
+
+        const approved = await targetSvc.approveTargetOrder(order._id, admin._id, {
+            adminPaymentProof: 'uploads/targets/admin-payment-proof.png',
+            auditContext: { actorId: admin._id, actorRole: ACTOR_ROLES.ADMIN },
+        });
+        expect(approved.status).toBe(TARGET_ORDER_STATUS.APPROVED);
+        expect(approved.screenshotProof).toBe('uploads/targets/customer-proof.png');
+        expect(approved.adminPaymentProof).toBe('uploads/targets/admin-payment-proof.png');
+        expect(approved.adminPaymentProofUploadedAt).toBeTruthy();
+        expect(approved.adminPaymentProofUploadedBy._id.toString()).toBe(admin._id.toString());
+        expect(approved.reviewedBy._id.toString()).toBe(admin._id.toString());
+        expect(approved.reviewedAt).toBeTruthy();
+
+        await expect(targetSvc.approveTargetOrder(order._id, admin._id, {
+            adminPaymentProof: 'uploads/targets/replacement-proof.png',
+        })).rejects.toMatchObject({ code: 'TARGET_ORDER_ALREADY_APPROVED' });
+        await expect(TargetOrder.findById(order._id).then((saved) => saved.adminPaymentProof))
+            .resolves.toBe('uploads/targets/admin-payment-proof.png');
+
+        const mine = await targetSvc.listMyTargetOrders(customer._id);
+        expect(mine.orders).toHaveLength(1);
+        expect(mine.orders[0].adminPaymentProof).toBe('uploads/targets/admin-payment-proof.png');
+        const { customer: otherCustomer } = await createCustomerWithGroup({ email: 'other-target-proof@example.com' });
+        await expect(targetSvc.listMyTargetOrders(otherCustomer._id).then((result) => result.orders)).resolves.toEqual([]);
+
+        await flushAudit();
+        const audit = await AuditLog.findOne({ action: TARGET_ORDER_ACTIONS.APPROVED, entityId: order._id }).lean();
+        expect(audit.metadata).toMatchObject({
+            adminPaymentProofAttached: true,
+            adminPaymentProof: 'uploads/targets/admin-payment-proof.png',
+            reviewedBy: admin._id.toString(),
+        });
+    });
+
+    test('does not allow rejected or generic status approval and preserves a legacy approved record without proof', async () => {
+        const { customer } = await createCustomerWithGroup();
+        const admin = await createAdmin();
+        const app = await targetSvc.createTargetApp({
+            name: 'Legacy Proof App',
+            unitPrice: 1,
+            targetAccountId: 'legacy-proof-target-account',
+            allowedPaymentMethods: ['instapay'],
+        });
+        const rejected = await targetSvc.createTargetOrder({
+            userId: customer._id,
+            appId: app._id,
+            coinAmount: 2,
+            senderId: 'rejected-customer',
+            transferNumber: '01000000012',
+            transactionNumber: 'rejected-txn',
+            paymentMethod: 'InstaPay',
+            screenshotProof: 'uploads/targets/rejected-customer-proof.png',
+        });
+        await targetSvc.rejectTargetOrder(rejected._id, admin._id, 'Invalid target transfer');
+        await expect(targetSvc.approveTargetOrder(rejected._id, admin._id, {
+            adminPaymentProof: 'uploads/targets/rejected-admin-proof.png',
+        })).rejects.toMatchObject({ code: 'TARGET_ORDER_ALREADY_REJECTED' });
+
+        const generic = await targetSvc.createTargetOrder({
+            userId: customer._id,
+            appId: app._id,
+            coinAmount: 3,
+            senderId: 'generic-customer',
+            transferNumber: '01000000013',
+            transactionNumber: 'generic-txn',
+            paymentMethod: 'InstaPay',
+            screenshotProof: 'uploads/targets/generic-customer-proof.png',
+        });
+        for (const status of ['APPROVED', 'APPROVE', 'DONE']) {
+            await expect(targetSvc.updateTargetOrderStatus(generic._id, status, admin._id))
+                .rejects.toMatchObject({ code: 'TARGET_ADMIN_PAYMENT_PROOF_REQUIRED' });
+        }
+
+        const legacy = await TargetOrder.create({
+            userId: customer._id,
+            appId: app._id,
+            appNameSnapshot: app.name,
+            senderId: 'legacy-customer',
+            paymentMethod: 'instapay',
+            transferNumber: '01000000014',
+            transactionNumber: 'legacy-txn',
+            screenshotProof: 'uploads/targets/legacy-customer-proof.png',
+            totalPrice: 4,
+            unitPriceSnapshot: 1,
+            coinAmount: 4,
+            status: TARGET_ORDER_STATUS.APPROVED,
+            reviewedBy: admin._id,
+            reviewedAt: new Date(),
+        });
+        const listed = await targetSvc.listMyTargetOrders(customer._id);
+        const legacyListed = listed.orders.find((item) => item._id.toString() === legacy._id.toString());
+        expect(legacyListed.adminPaymentProof).toBeNull();
+    });
+
+    test('keeps compare-and-swap approval atomic when two valid proof submissions race', async () => {
+        const { customer } = await createCustomerWithGroup();
+        const admin = await createAdmin();
+        const app = await targetSvc.createTargetApp({
+            name: 'Concurrent Proof App',
+            unitPrice: 1,
+            targetAccountId: 'concurrent-proof-target-account',
+            allowedPaymentMethods: ['instapay'],
+        });
+        const order = await targetSvc.createTargetOrder({
+            userId: customer._id,
+            appId: app._id,
+            coinAmount: 1,
+            senderId: 'concurrent-customer',
+            transferNumber: '01000000015',
+            transactionNumber: 'concurrent-txn',
+            paymentMethod: 'InstaPay',
+            screenshotProof: 'uploads/targets/concurrent-customer-proof.png',
+        });
+        const results = await Promise.allSettled([
+            targetSvc.approveTargetOrder(order._id, admin._id, { adminPaymentProof: 'uploads/targets/race-proof-a.png' }),
+            targetSvc.approveTargetOrder(order._id, admin._id, { adminPaymentProof: 'uploads/targets/race-proof-b.png' }),
+        ]);
+        expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+        expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+        const stored = await TargetOrder.findById(order._id);
+        expect(stored.status).toBe(TARGET_ORDER_STATUS.APPROVED);
+        expect(['uploads/targets/race-proof-a.png', 'uploads/targets/race-proof-b.png']).toContain(stored.adminPaymentProof);
+    });
+
+    test('rejects a spoofed admin payment proof image signature before approval', async () => {
+        await expect(validateUploadedFileSignature({
+            mimetype: 'image/png',
+            buffer: Buffer.from('not a PNG image'),
+        }, {
+            code: 'TARGET_ADMIN_PAYMENT_PROOF_INVALID',
+            message: 'Admin payment proof file is invalid.',
+        })).rejects.toMatchObject({ code: 'TARGET_ADMIN_PAYMENT_PROOF_INVALID' });
     });
 });

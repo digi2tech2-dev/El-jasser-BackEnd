@@ -137,6 +137,23 @@ const targetOrderSchema = new mongoose.Schema(
             trim: true,
             maxlength: [2048, 'screenshotProof path cannot exceed 2048 characters'],
         },
+        // Optional for historical approved orders created before payout evidence
+        // was captured. New PENDING -> APPROVED transitions enforce it in service.
+        adminPaymentProof: {
+            type: String,
+            trim: true,
+            maxlength: [2048, 'adminPaymentProof path cannot exceed 2048 characters'],
+            default: null,
+        },
+        adminPaymentProofUploadedAt: {
+            type: Date,
+            default: null,
+        },
+        adminPaymentProofUploadedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+            default: null,
+        },
         totalPrice: {
             type: Number,
             required: [true, 'totalPrice is required'],

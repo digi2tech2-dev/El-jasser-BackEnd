@@ -83,7 +83,7 @@ const authorize = require('../../shared/middlewares/authorize');
 const requirePermission = require('../../shared/middlewares/requirePermission');
 const catchAsync = require('../../shared/utils/catchAsync');
 const { sendSuccess, sendPaginated } = require('../../shared/utils/apiResponse');
-const { createUpload } = require('../../shared/middlewares/upload');
+const { createUpload, validateUploadedFileSignature } = require('../../shared/middlewares/upload');
 const { walletLimiter } = require('../../shared/middlewares/rateLimiter');
 const { BusinessRuleError } = require('../../shared/errors/AppError');
 
@@ -91,6 +91,7 @@ const { validateBody, validateQuery, schemas } = require('./admin.validation');
 
 const avatarUpload = createUpload('avatars');
 const targetAppUpload = createUpload('target-apps');
+const targetPaymentProofUpload = createUpload('targets');
 const referralPayoutReceiptUpload = createUpload('referral-payout-receipts');
 
 // ── Controllers ───────────────────────────────────────────────────────────────
@@ -114,6 +115,7 @@ const referralPayoutCtrl = require('../referralPayouts/referralPayout.controller
 const referralPayoutSvc = require('../referralPayouts/referralPayout.service');
 const subAgentRequestCtrl = require('../subAgentRequests/subAgentRequest.controller');
 const targetSvc = require('../targets/target.service');
+const { TargetOrder } = require('../targets/target.model');
 const targetValidation = require('../targets/target.validation');
 const notifSvc = require('../notifications/notification.service');
 const notifValidation = require('../notifications/notification.validation');
@@ -579,7 +581,36 @@ router.get('/targets', requirePermission('MANAGE_TARGETS'), targetValidation.val
     });
 }));
 
-router.patch('/targets/:id/approve', requirePermission('CONFIRM_TARGET_REQUESTS'), catchAsync(async (req, res) => {
+const cleanupTargetPaymentProof = async (file) => {
+    if (file?.path) await require('fs/promises').unlink(file.path).catch(() => null);
+};
+
+const validateTargetPaymentProofSignature = async (req, _res, next) => {
+    try {
+        if (!req.file) {
+            throw new BusinessRuleError(
+                'Admin payment proof is required before approving this target order.',
+                'TARGET_ADMIN_PAYMENT_PROOF_REQUIRED'
+            );
+        }
+        await validateUploadedFileSignature(req.file, {
+            code: 'TARGET_ADMIN_PAYMENT_PROOF_INVALID',
+            message: 'Admin payment proof file is invalid.',
+        });
+        next();
+    } catch (err) {
+        await cleanupTargetPaymentProof(req.file);
+        next(err instanceof BusinessRuleError
+            ? err
+            : new BusinessRuleError('Admin payment proof file is invalid.', 'TARGET_ADMIN_PAYMENT_PROOF_INVALID'));
+    }
+};
+
+router.patch('/targets/:id/approve',
+    requirePermission('CONFIRM_TARGET_REQUESTS'),
+    targetPaymentProofUpload.single('adminPaymentProof'),
+    validateTargetPaymentProofSignature,
+    catchAsync(async (req, res) => {
     const auditContext = req.auditContext ?? {
         actorId: req.user._id,
         actorRole: String(req.user.role || '').toUpperCase(),
@@ -587,11 +618,23 @@ router.patch('/targets/:id/approve', requirePermission('CONFIRM_TARGET_REQUESTS'
         userAgent: req.get('User-Agent') ?? null,
     };
 
-    const order = await targetSvc.approveTargetOrder(
-        req.params.id,
-        req.user._id,
-        auditContext
-    );
+    const adminPaymentProof = `uploads/targets/${req.file.filename}`;
+    let order;
+    try {
+        order = await targetSvc.approveTargetOrder(req.params.id, req.user._id, {
+            adminPaymentProof,
+            auditContext,
+        });
+    } catch (err) {
+        // Do not delete a proof that the atomic mutation has already persisted
+        // if a later read/notification step happened to fail.
+        const persistedProof = await TargetOrder.exists({
+            _id: req.params.id,
+            adminPaymentProof,
+        }).catch(() => null);
+        if (!persistedProof) await cleanupTargetPaymentProof(req.file);
+        throw err;
+    }
     sendSuccess(res, order, 'Target order approved.');
 }));
 

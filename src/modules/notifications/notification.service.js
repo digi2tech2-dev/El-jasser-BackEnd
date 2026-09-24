@@ -249,8 +249,8 @@ const notifyDepositRejected = (deposit, adminNotes = null) => {
 const notifyTargetApproved = (order) => {
     return notifyUser({
         userId: order.userId?._id ?? order.userId,
-        title: 'Target Order Approved ✅',
-        message: `Your target coin purchase of ${order.coinAmount} coins has been approved.`,
+        title: 'تم قبول طلب بيع التارجت ✅',
+        message: `تم قبول طلب بيع التارجت وإرفاق إثبات تحويل المبلغ لطلب ${order.coinAmount}.`,
         type: NOTIFICATION_TYPE.SUCCESS,
         source: 'TARGET',
     });

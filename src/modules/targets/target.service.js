@@ -231,7 +231,8 @@ const safeNotify = (label, notifyFn, ...args) => {
 const populateTargetOrder = (orderId) => TargetOrder.findById(orderId)
     .populate('userId', 'name email currency walletBalance')
     .populate('appId', 'name image targetAccountId unitPrice allowedPaymentMethods isActive')
-    .populate('reviewedBy', 'name email');
+    .populate('reviewedBy', 'name email')
+    .populate('adminPaymentProofUploadedBy', 'name email');
 
 // =============================================================================
 // TARGET APPS
@@ -447,7 +448,23 @@ const createTargetOrder = async ({
     return order;
 };
 
-const approveTargetOrder = async (orderId, adminId, auditContext = null) => {
+const normalizeAdminPaymentProof = (value) => {
+    const proof = String(value || '').trim();
+    // The approval route creates this solely from Multer's server-generated name.
+    if (!/^uploads\/targets\/[A-Za-z0-9-]+\.(?:jpe?g|png|webp)$/i.test(proof)) {
+        throw new BusinessRuleError(
+            'An uploaded admin payment proof is required before approving this target order.',
+            'TARGET_ADMIN_PAYMENT_PROOF_REQUIRED'
+        );
+    }
+    return proof;
+};
+
+const approveTargetOrder = async (orderId, adminId, {
+    adminPaymentProof,
+    auditContext = null,
+} = {}) => {
+    const trustedAdminPaymentProof = normalizeAdminPaymentProof(adminPaymentProof);
     const existing = await TargetOrder.findById(orderId);
     if (!existing) throw new NotFoundError('TargetOrder');
 
@@ -464,13 +481,17 @@ const approveTargetOrder = async (orderId, adminId, auditContext = null) => {
         );
     }
 
+    const reviewedAt = new Date();
     const updated = await TargetOrder.findOneAndUpdate(
         { _id: orderId, status: TARGET_ORDER_STATUS.PENDING },
         {
             $set: {
                 status: TARGET_ORDER_STATUS.APPROVED,
                 reviewedBy: adminId,
-                reviewedAt: new Date(),
+                reviewedAt,
+                adminPaymentProof: trustedAdminPaymentProof,
+                adminPaymentProofUploadedAt: reviewedAt,
+                adminPaymentProofUploadedBy: adminId,
             },
         },
         { new: true }
@@ -497,6 +518,10 @@ const approveTargetOrder = async (orderId, adminId, auditContext = null) => {
             totalPrice: updated.totalPrice,
             unitPriceSnapshot: updated.unitPriceSnapshot,
             reviewedBy: adminId.toString(),
+            adminPaymentProofAttached: true,
+            adminPaymentProof: updated.adminPaymentProof,
+            adminPaymentProofUploadedAt: updated.adminPaymentProofUploadedAt,
+            adminPaymentProofUploadedBy: adminId.toString(),
         },
         ipAddress: auditContext?.ipAddress ?? null,
         userAgent: auditContext?.userAgent ?? null,
@@ -576,7 +601,9 @@ const updateTargetOrderStatus = async (orderId, status, adminId, adminNotes = nu
     const normalizedStatus = String(status || '').trim().toUpperCase();
 
     if (['APPROVED', 'APPROVE', 'DONE'].includes(normalizedStatus)) {
-        return approveTargetOrder(orderId, adminId, auditContext);
+        // Legacy JSON status routes have no server-generated upload and must fail
+        // through the canonical proof requirement instead of bypassing it.
+        return approveTargetOrder(orderId, adminId, { auditContext });
     }
 
     if (['REJECTED', 'REJECT'].includes(normalizedStatus)) {
@@ -628,7 +655,8 @@ const listTargetOrders = async ({ page = 1, limit = 20, status, search } = {}) =
             .limit(limit)
             .populate('userId', 'name email walletBalance currency')
             .populate('appId', 'name image targetAccountId unitPrice allowedPaymentMethods isActive')
-            .populate('reviewedBy', 'name email'),
+            .populate('reviewedBy', 'name email')
+            .populate('adminPaymentProofUploadedBy', 'name email'),
         TargetOrder.countDocuments(filter),
         TargetOrder.aggregate([
             {
@@ -666,7 +694,8 @@ const listMyTargetOrders = async (userId, { page = 1, limit = 20, status } = {})
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit)
-            .populate('appId', 'name image targetAccountId unitPrice allowedPaymentMethods isActive'),
+            .populate('appId', 'name image targetAccountId unitPrice allowedPaymentMethods isActive')
+            .populate('adminPaymentProofUploadedBy', 'name email'),
         TargetOrder.countDocuments(filter),
     ]);
 

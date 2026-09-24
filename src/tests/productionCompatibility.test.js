@@ -12,7 +12,7 @@ const adminUsersService = require('../modules/admin/admin.users.service');
 const targetService = require('../modules/targets/target.service');
 const { getProviderAdapter } = require('../modules/providers/adapters/adapter.factory');
 const { Provider } = require('../modules/providers/provider.model');
-const { TARGET_ORDER_STATUS } = require('../modules/targets/target.model');
+const { TargetOrder, TARGET_ORDER_STATUS } = require('../modules/targets/target.model');
 const { Setting } = require('../modules/admin/setting.model');
 const { invalidateSettingsCache } = require('../modules/admin/admin.settings.service');
 const {
@@ -204,8 +204,14 @@ describe('production compatibility contracts', () => {
         const stillPending = await targetService.updateTargetOrderStatus(order._id, 'PENDING', admin._id);
         expect(stillPending.status).toBe(TARGET_ORDER_STATUS.PENDING);
 
-        const approved = await targetService.updateTargetOrderStatus(order._id, 'APPROVED', admin._id);
-        expect(approved.status).toBe(TARGET_ORDER_STATUS.APPROVED);
+        await expect(
+            targetService.updateTargetOrderStatus(order._id, 'APPROVED', admin._id)
+        ).rejects.toMatchObject({ code: 'TARGET_ADMIN_PAYMENT_PROOF_REQUIRED' });
+        await expect(TargetOrder.findById(order._id).then((saved) => saved.status)).resolves.toBe(TARGET_ORDER_STATUS.PENDING);
+
+        await targetService.approveTargetOrder(order._id, admin._id, {
+            adminPaymentProof: 'uploads/targets/admin-payment-proof-compat.png',
+        });
 
         await expect(
             targetService.updateTargetOrderStatus(order._id, 'PENDING', admin._id)
