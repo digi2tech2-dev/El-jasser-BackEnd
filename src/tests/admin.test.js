@@ -391,6 +391,54 @@ describe('[3] Admin Settings Service', () => {
         expect(fresh.paymentGroups).toEqual(paymentGroups);
     });
 
+    it('accepts legacy payment methods with no QR image', async () => {
+        const { admin } = await setup();
+        const paymentGroups = [{
+            id: 'legacy-group',
+            methods: [{ id: 'legacy-method', name: 'Legacy method', feePercent: 1 }],
+        }];
+
+        await expect(adminSettingService.updateSetting('paymentGroups', paymentGroups, admin._id)).resolves.toBeDefined();
+    });
+
+    it('accepts a payment QR image produced by the payment upload endpoint', async () => {
+        const { admin } = await setup();
+        const paymentGroups = [{
+            id: 'qr-group',
+            methods: [{
+                id: 'qr-method',
+                name: 'QR method',
+                feePercent: 1,
+                accountNumber: '',
+                qrCodeImage: '/uploads/payments/1720000000000-a1b2c3d4.png',
+                qrCodeImageName: 'payment-qr.png',
+            }],
+        }];
+
+        await adminSettingService.updateSetting('paymentGroups', paymentGroups, admin._id);
+        const saved = await adminSettingService.getSettingByKey('paymentGroups');
+        expect(saved.value[0].methods[0]).toMatchObject({
+            accountNumber: '',
+            qrCodeImage: '/uploads/payments/1720000000000-a1b2c3d4.png',
+            qrCodeImageName: 'payment-qr.png',
+        });
+    });
+
+    it.each([
+        'https://example.com/payment-qr.png',
+        'data:image/png;base64,AAAA',
+        '/uploads/payments/../avatars/not-a-qr.png',
+    ])('rejects unsafe payment QR image paths: %s', async (qrCodeImage) => {
+        const { admin } = await setup();
+        const paymentGroups = [{
+            id: 'unsafe-qr-group',
+            methods: [{ id: 'unsafe-qr-method', name: 'Unsafe QR', feePercent: 1, qrCodeImage }],
+        }];
+
+        await expect(adminSettingService.updateSetting('paymentGroups', paymentGroups, admin._id))
+            .rejects.toMatchObject({ code: 'INVALID_PAYMENT_METHOD_QR_IMAGE' });
+    });
+
     it('updateSetting throws NOT_FOUND for unknown key', async () => {
         const { admin } = await setup();
         await expect(

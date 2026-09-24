@@ -12,10 +12,11 @@
  */
 
 const { Router } = require('express');
+const fs = require('fs/promises');
 const authenticate = require('../middlewares/authenticate');
 const authorize = require('../middlewares/authorize');
 const requirePermission = require('../middlewares/requirePermission');
-const { createUpload } = require('../middlewares/upload');
+const { createUpload, validateUploadedFileSignature } = require('../middlewares/upload');
 const { BusinessRuleError } = require('../errors/AppError');
 const { sendSuccess } = require('../utils/apiResponse');
 
@@ -26,6 +27,21 @@ const CATEGORY_PERMISSIONS = {
     products: 'MANAGE_PRODUCTS',
     categories: 'MANAGE_PRODUCTS',
     payments: 'MANAGE_PAYMENT_METHODS',
+};
+
+const validateAndRemoveInvalidUpload = async (file) => {
+    try {
+        await validateUploadedFileSignature(file, {
+            code: 'INVALID_FILE_TYPE',
+            message: 'Uploaded image content does not match its declared type.',
+        });
+    } catch (validationError) {
+        // Multer has already written the file at this point. Only remove the
+        // exact file created for this request; never derive a path from user
+        // input or touch previously saved uploads.
+        await fs.unlink(file.path).catch(() => undefined);
+        throw validationError;
+    }
 };
 
 // All upload routes require auth + admin
@@ -53,7 +69,7 @@ router.post('/:category', (req, res, next) => {
 }, (req, res, next) => {
     const { category } = req.params;
     const upload = createUpload(category);
-    upload.single('image')(req, res, (err) => {
+    upload.single('image')(req, res, async (err) => {
         if (err) return next(err);
 
         if (!req.file) {
@@ -62,9 +78,16 @@ router.post('/:category', (req, res, next) => {
             );
         }
 
+        try {
+            await validateAndRemoveInvalidUpload(req.file);
+        } catch (validationError) {
+            return next(validationError);
+        }
+
         const relativePath = `/uploads/${category}/${req.file.filename}`;
-        sendSuccess(res, { path: relativePath }, 'Image uploaded successfully.');
+        return sendSuccess(res, { path: relativePath }, 'Image uploaded successfully.');
     });
 });
 
 module.exports = router;
+module.exports._test = { validateAndRemoveInvalidUpload };
