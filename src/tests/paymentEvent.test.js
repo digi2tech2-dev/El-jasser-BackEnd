@@ -10,6 +10,8 @@ const depositService = require('../modules/deposits/deposit.service');
 const { DepositRequest, DEPOSIT_STATUS } = require('../modules/deposits/deposit.model');
 const { User } = require('../modules/users/user.model');
 const { WalletTransaction } = require('../modules/wallet/walletTransaction.model');
+const { Setting } = require('../modules/admin/setting.model');
+const { invalidateSettingsCache } = require('../modules/admin/admin.settings.service');
 const {
     connectTestDB, disconnectTestDB, clearCollections, createCustomerWithGroup,
 } = require('./testHelpers');
@@ -70,6 +72,18 @@ const createPendingVodafoneDeposit = async ({
         senderDetails: { value: senderPhone },
     });
     return { customer, deposit };
+};
+
+const setVodafoneFee = async (feePercent) => {
+    await Setting.updateOne(
+        { key: 'paymentGroups' },
+        { $set: { key: 'paymentGroups', value: [{
+            id: 'wallets', name: 'Wallets', isActive: true,
+            methods: [{ id: 'vodafone', name: 'Vodafone Cash', type: 'mobile_wallet', isActive: true, feePercent }],
+        }] } },
+        { upsert: true }
+    );
+    invalidateSettingsCache('paymentGroups');
 };
 
 beforeAll(async () => {
@@ -194,8 +208,21 @@ describe('payment event persistence and matching', () => {
     });
 
     test('marks multiple exact candidate deposits as AMBIGUOUS', async () => {
-        await createPendingVodafoneDeposit();
-        await createPendingVodafoneDeposit();
+        const { deposit } = await createPendingVodafoneDeposit();
+        // The public request service correctly prevents reusing a real
+        // provider reference. Seed the second legacy-like pending document
+        // directly to exercise the defensive ambiguity branch.
+        await DepositRequest.create({
+            userId: deposit.userId,
+            paymentMethodId: deposit.paymentMethodId,
+            transactionId: deposit.transactionId,
+            requestedAmount: deposit.requestedAmount,
+            currency: deposit.currency,
+            exchangeRate: deposit.exchangeRate,
+            amountUsd: deposit.amountUsd,
+            senderDetails: deposit.senderDetails,
+            paymentMethodFeePercentSnapshot: deposit.paymentMethodFeePercentSnapshot,
+        });
         await postEvent(walletSms());
         expect((await PaymentEvent.findOne()).matchStatus).toBe('AMBIGUOUS');
     });
@@ -204,11 +231,14 @@ describe('payment event persistence and matching', () => {
 describe('future auto-approval path', () => {
     test('uses the canonical deposit approval transaction exactly once when explicitly enabled in isolation', async () => {
         bridgeConfig.autoApprove = true;
+        await setVodafoneFee(1);
         const { customer, deposit } = await createPendingVodafoneDeposit();
         const response = await postEvent(walletSms());
         expect(response.body.autoApproved).toBe(true);
-        expect(await DepositRequest.findById(deposit._id)).toMatchObject({ status: 'APPROVED', reviewSource: 'VODAFONE_SMS_AUTO' });
-        expect((await User.findById(customer._id)).walletBalance).toBe(600);
+        expect(await DepositRequest.findById(deposit._id)).toMatchObject({
+            status: 'APPROVED', reviewSource: 'VODAFONE_SMS_AUTO', paymentMethodFeePercentSnapshot: 1, paymentMethodFeeAmount: 5, netAmount: 495, walletCreditAmount: 495,
+        });
+        expect((await User.findById(customer._id)).walletBalance).toBe(595);
         expect(await WalletTransaction.countDocuments({ userId: customer._id })).toBe(1);
         expect((await postEvent(walletSms())).body.duplicate).toBe(true);
         expect(await WalletTransaction.countDocuments({ userId: customer._id })).toBe(1);

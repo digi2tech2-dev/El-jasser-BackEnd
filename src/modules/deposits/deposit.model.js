@@ -50,6 +50,39 @@ const depositRequestSchema = new mongoose.Schema(
         },
 
         /**
+         * Fee percentage configured for the selected payment method when this
+         * request was submitted. It is never re-read from settings at review.
+         * Missing legacy values are treated as 0 during approval.
+         */
+        paymentMethodFeePercentSnapshot: {
+            type: Number,
+            min: [0, 'paymentMethodFeePercentSnapshot cannot be negative'],
+            max: [100, 'paymentMethodFeePercentSnapshot cannot exceed 100'],
+            default: 0,
+        },
+
+        /** Applied only when approved, in the deposit currency. */
+        paymentMethodFeeAmount: {
+            type: Number,
+            min: [0, 'paymentMethodFeeAmount cannot be negative'],
+            default: null,
+        },
+
+        /** Gross final amount less the applied fee, in the deposit currency. */
+        netAmount: {
+            type: Number,
+            min: [0, 'netAmount cannot be negative'],
+            default: null,
+        },
+
+        /** Exact amount credited to the wallet, in the wallet currency. */
+        walletCreditAmount: {
+            type: Number,
+            min: [0, 'walletCreditAmount cannot be negative'],
+            default: null,
+        },
+
+        /**
          * Amount the customer claims to have transferred, in the local currency.
          * Must be a positive number. Stored as-is in the request.
          */

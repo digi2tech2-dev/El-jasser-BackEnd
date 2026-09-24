@@ -85,7 +85,8 @@ const analyzeReceiptUpload = catchAsync(async (req, _res, next) => {
  */
 const createDeposit = catchAsync(async (req, res) => {
     const { requestedAmount, currency, paymentMethodId, transactionId, notes } = req.body;
-    const { isElectronicWallet } = await getDepositPaymentMethodRequirements(paymentMethodId);
+    const paymentMethodRequirements = await getDepositPaymentMethodRequirements(paymentMethodId);
+    const { isElectronicWallet } = paymentMethodRequirements;
     const normalizedTransactionId = String(transactionId || '').trim();
 
     if (isElectronicWallet && !normalizedTransactionId) {
@@ -138,6 +139,7 @@ const createDeposit = catchAsync(async (req, res) => {
         paymentMethodId,
         transactionId: normalizedTransactionId || null,
         isElectronicWallet,
+        paymentMethodRequirements,
         requestedAmount: parsedAmount,
         currency: currency.toUpperCase(),
         exchangeRate,

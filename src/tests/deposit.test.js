@@ -57,6 +57,10 @@ const { AuditLog } = require('../modules/audit/audit.model');
 const { DEPOSIT_ACTIONS, WALLET_ACTIONS, ENTITY_TYPES } = require('../modules/audit/audit.constants');
 const { User } = require('../modules/users/user.model');
 const { WalletTransaction } = require('../modules/wallet/walletTransaction.model');
+const { Setting } = require('../modules/admin/setting.model');
+const { invalidateSettingsCache, updateSetting } = require('../modules/admin/admin.settings.service');
+const { Currency } = require('../modules/currency/currency.model');
+const { invalidateCurrencyCache } = require('../services/currencyConverter.service');
 
 const {
     connectTestDB,
@@ -101,6 +105,23 @@ const ensureGroup = async () => {
     return _group;
 };
 beforeEach(() => { _group = null; });
+
+const setPaymentMethodFee = async (feePercent, methodId = 'fee-method') => {
+    await Setting.updateOne(
+        { key: 'paymentGroups' },
+        {
+            $set: {
+                key: 'paymentGroups',
+                value: [{
+                    id: 'fee-group', name: 'Fees', isActive: true,
+                    methods: [{ id: methodId, name: 'Fee method', type: 'bank_transfer', isActive: true, feePercent }],
+                }],
+            },
+        },
+        { upsert: true }
+    );
+    invalidateSettingsCache('paymentGroups');
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // [1] MODEL VALIDATION
@@ -307,6 +328,27 @@ describe('[2] createDepositRequest', () => {
         const count = await DepositRequest.countDocuments({ userId: customer._id });
         expect(count).toBe(2);
     });
+
+    it('snapshots the configured payment-method fee percentage at creation', async () => {
+        await setPaymentMethodFee(2.5);
+
+        const deposit = await depositService.createDepositRequest({
+            userId: customer._id,
+            ...VALID_DEPOSIT,
+            paymentMethodId: 'fee-method',
+        });
+
+        expect(deposit.paymentMethodFeePercentSnapshot).toBe(2.5);
+    });
+
+    it.each([-1, 100.01, '2.5'])('rejects invalid payment-method fee configuration: %p', async (feePercent) => {
+        const admin = await createAdmin();
+        await Setting.create({ key: 'paymentGroups', value: [] });
+
+        await expect(updateSetting('paymentGroups', [{
+            id: 'fees', methods: [{ id: 'fee-method', feePercent }],
+        }], admin._id)).rejects.toMatchObject({ code: 'INVALID_PAYMENT_METHOD_FEE_PERCENT' });
+    });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -466,6 +508,107 @@ describe('[3] approveDeposit', () => {
 
         const balanceAfterSecond = (await User.findById(customer._id)).walletBalance;
         expect(balanceAfterSecond).toBe(balanceAfterFirst);
+    });
+
+    it('deducts a one-percent method fee once and persists the approval snapshot', async () => {
+        await setPaymentMethodFee(1);
+        const feeDeposit = await depositService.createDepositRequest({
+            userId: customer._id,
+            ...VALID_DEPOSIT,
+            paymentMethodId: 'fee-method',
+            requestedAmount: 100,
+            amountUsd: 100,
+        });
+
+        await depositService.approveDeposit(feeDeposit._id, admin._id);
+
+        const approved = await DepositRequest.findById(feeDeposit._id);
+        const user = await User.findById(customer._id);
+        const tx = await WalletTransaction.findOne({ userId: customer._id, reference: feeDeposit._id });
+        expect(approved).toMatchObject({
+            paymentMethodFeePercentSnapshot: 1,
+            paymentMethodFeeAmount: 1,
+            netAmount: 99,
+            walletCreditAmount: 99,
+        });
+        expect(user.walletBalance).toBe(99);
+        expect(tx.amount).toBe(99);
+    });
+
+    it('rounds a decimal payment-method fee using the deposit two-decimal convention', async () => {
+        await setPaymentMethodFee(2.5);
+        const feeDeposit = await depositService.createDepositRequest({
+            userId: customer._id,
+            ...VALID_DEPOSIT,
+            paymentMethodId: 'fee-method',
+        });
+
+        await depositService.approveDeposit(feeDeposit._id, admin._id);
+
+        const approved = await DepositRequest.findById(feeDeposit._id);
+        expect(approved.paymentMethodFeeAmount).toBe(12.5);
+        expect(approved.netAmount).toBe(487.5);
+        expect(approved.walletCreditAmount).toBe(487.5);
+    });
+
+    it('uses the frozen fee percentage after payment-method settings change', async () => {
+        await setPaymentMethodFee(1);
+        const oldDeposit = await depositService.createDepositRequest({
+            userId: customer._id, ...VALID_DEPOSIT, paymentMethodId: 'fee-method', requestedAmount: 100, amountUsd: 100,
+        });
+        await setPaymentMethodFee(5);
+        const newDeposit = await depositService.createDepositRequest({
+            userId: customer._id, ...VALID_DEPOSIT, paymentMethodId: 'fee-method', requestedAmount: 100, amountUsd: 100,
+        });
+
+        await depositService.approveDeposit(oldDeposit._id, admin._id);
+        await depositService.approveDeposit(newDeposit._id, admin._id);
+
+        expect(await DepositRequest.findById(oldDeposit._id)).toMatchObject({ paymentMethodFeePercentSnapshot: 1, netAmount: 99 });
+        expect(await DepositRequest.findById(newDeposit._id)).toMatchObject({ paymentMethodFeePercentSnapshot: 5, netAmount: 95 });
+    });
+
+    it('treats a legacy deposit with no fee snapshot as zero percent', async () => {
+        const legacyDeposit = await DepositRequest.create({ userId: customer._id, ...VALID_DEPOSIT, requestedAmount: 100, amountUsd: 100 });
+        await DepositRequest.updateOne({ _id: legacyDeposit._id }, { $unset: { paymentMethodFeePercentSnapshot: 1 } });
+
+        await depositService.approveDeposit(legacyDeposit._id, admin._id);
+
+        expect(await DepositRequest.findById(legacyDeposit._id)).toMatchObject({ paymentMethodFeeAmount: 0, netAmount: 100, walletCreditAmount: 100 });
+        expect((await User.findById(customer._id)).walletBalance).toBe(100);
+    });
+
+    it('recalculates the fee from an admin override amount while retaining the frozen percentage', async () => {
+        await setPaymentMethodFee(2);
+        const feeDeposit = await depositService.createDepositRequest({ userId: customer._id, ...VALID_DEPOSIT, paymentMethodId: 'fee-method', requestedAmount: 100, amountUsd: 100 });
+
+        await depositService.approveDeposit(feeDeposit._id, admin._id, { amount: 80 });
+
+        expect(await DepositRequest.findById(feeDeposit._id)).toMatchObject({
+            requestedAmount: 80, paymentMethodFeePercentSnapshot: 2, paymentMethodFeeAmount: 1.6, netAmount: 78.4, walletCreditAmount: 78.4,
+        });
+    });
+
+    it('converts the net deposit amount, rather than the gross amount, for a cross-currency wallet', async () => {
+        await setPaymentMethodFee(1);
+        await Currency.create([
+            { code: 'EGP', name: 'Egyptian Pound', symbol: 'E£', platformRate: 50, marketRate: 50, isActive: true },
+            { code: 'SAR', name: 'Saudi Riyal', symbol: 'SAR', platformRate: 3.75, marketRate: 3.75, isActive: true },
+        ]);
+        invalidateCurrencyCache('EGP');
+        invalidateCurrencyCache('SAR');
+        await User.updateOne({ _id: customer._id }, { $set: { currency: 'SAR' } });
+        const feeDeposit = await depositService.createDepositRequest({
+            userId: customer._id, ...VALID_DEPOSIT, paymentMethodId: 'fee-method', requestedAmount: 100, currency: 'EGP', exchangeRate: 50, amountUsd: 2,
+        });
+
+        await depositService.approveDeposit(feeDeposit._id, admin._id);
+
+        const approved = await DepositRequest.findById(feeDeposit._id).lean();
+        expect(approved.paymentMethodFeeAmount).toBe(1);
+        expect(approved.netAmount).toBe(99);
+        expect(approved.walletCreditAmount).toBe(7.43);
+        expect((await User.findById(customer._id)).walletBalance).toBe(7.43);
     });
 });
 
@@ -749,6 +892,23 @@ describe('[8] Audit log correctness', () => {
         const log = await AuditLog.findOne({ action: DEPOSIT_ACTIONS.APPROVED }).lean();
         expect(log.metadata.finalAmount).toBe(450);
         expect(log.metadata.originalRequestedAmount).toBe(500);
+        expect(log.metadata).toMatchObject({
+            paymentMethodFeePercent: 0,
+            paymentMethodFeeAmount: 0,
+            netAmount: 450,
+            walletCurrency: 'USD',
+            walletCreditAmount: 450,
+        });
+
+        const walletLog = await AuditLog.findOne({ action: WALLET_ACTIONS.CREDIT }).lean();
+        expect(walletLog.metadata).toMatchObject({
+            finalAmount: 450,
+            paymentMethodFeePercent: 0,
+            paymentMethodFeeAmount: 0,
+            netAmount: 450,
+            walletCurrency: 'USD',
+            walletCreditAmount: 450,
+        });
     });
 
     it('DEPOSIT_REJECTED log records the admin reviewer', async () => {

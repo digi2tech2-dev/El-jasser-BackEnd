@@ -193,10 +193,17 @@ const notifyAccountApproved = (userId) => {
  * @param {Object} deposit - DepositRequest document
  */
 const notifyDepositApproved = (deposit) => {
+    const grossAmount = deposit.requestedAmount;
+    const currency = deposit.currency || 'USD';
+    const feeAmount = Number(deposit.paymentMethodFeeAmount || 0);
+    const netAmount = deposit.netAmount ?? grossAmount;
+    const walletCreditAmount = deposit.walletCreditAmount ?? netAmount;
+    const walletCurrency = deposit.userId?.currency || currency;
+
     return notifyUser({
         userId: deposit.userId?._id ?? deposit.userId,
         title: 'Deposit Approved ✅',
-        message: `Your deposit of ${deposit.requestedAmount} ${deposit.currency || 'USD'} has been approved and credited to your wallet.`,
+        message: `Your deposit was approved. Gross: ${grossAmount} ${currency}. Method fee: ${feeAmount} ${currency}. Net credited: ${walletCreditAmount} ${walletCurrency}.`,
         type: NOTIFICATION_TYPE.SUCCESS,
         source: 'DEPOSIT',
     });

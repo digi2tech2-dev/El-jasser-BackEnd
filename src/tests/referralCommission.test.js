@@ -111,6 +111,23 @@ describe('Referral commission engine', () => {
         expect(updatedDeposit.referralCommissionId.toString()).toBe(commission._id.toString());
     });
 
+    it('keeps referral commission sourced from the gross approved amount when a payment-method fee is deducted', async () => {
+        const admin = await createAdmin();
+        const { referrer, referred } = await createReferralPair();
+        const deposit = await createPendingDeposit(referred._id, {
+            requestedAmount: 500,
+            amountUsd: 500,
+            paymentMethodFeePercentSnapshot: 2,
+        });
+
+        await depositService.approveDeposit(deposit._id, admin._id);
+
+        const commission = await ReferralCommission.findOne({ referrerUserId: referrer._id });
+        const approvedDeposit = await DepositRequest.findById(deposit._id);
+        expect(approvedDeposit).toMatchObject({ paymentMethodFeeAmount: 10, netAmount: 490, walletCreditAmount: 490 });
+        expect(commission.commissionAmountOriginalCurrency).toBe('5.000000');
+    });
+
     it('marks deposits from non-referred users as not applicable and creates no commission', async () => {
         const admin = await createAdmin();
         const { customer } = await createCustomerWithGroup({ walletBalance: 0 });

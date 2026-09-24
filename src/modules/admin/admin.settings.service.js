@@ -12,6 +12,7 @@ const { NotFoundError } = require('../../shared/errors/AppError');
 const { createAuditLog } = require('../audit/audit.service');
 const { ADMIN_ACTIONS, ENTITY_TYPES, ACTOR_ROLES } = require('../audit/audit.constants');
 const settingsCache = require('./settings.cache');
+const { validatePaymentGroupsFeePercent } = require('../deposits/paymentMethodFee');
 
 const PAYMENT_SETTING_KEYS = new Set([
     'paymentGroups',
@@ -86,6 +87,10 @@ const updateSetting = async (key, value, adminId) => {
     if (!setting) throw new NotFoundError('Setting');
 
     const before = setting.value;
+
+    if (key === 'paymentGroups') {
+        validatePaymentGroupsFeePercent(value);
+    }
 
     // Mongoose does not detect mutations to Mixed-type fields.
     // Without markModified(), `.save()` silently skips the write.

@@ -1,7 +1,10 @@
 'use strict';
 
 const mongoose = require('mongoose');
+const Decimal = require('decimal.js');
 const { DepositRequest, DEPOSIT_STATUS } = require('./deposit.model');
+const { getDepositPaymentMethodRequirements } = require('./depositPaymentMethod.service');
+const { normalizePaymentMethodFeePercent } = require('./paymentMethodFee');
 const { User } = require('../users/user.model');
 const { creditWalletDirect } = require('../wallet/wallet.service');
 const { processDepositReferralCommission } = require('../referrals/referralCommission.service');
@@ -22,6 +25,32 @@ const runTestHook = async (hook, payload) => {
         throw new Error('Deposit approval test hooks are only available in NODE_ENV=test.');
     }
     await hook(payload);
+};
+
+const roundDepositMoney = (value) => new Decimal(value)
+    .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+    .toNumber();
+
+const calculateDepositFee = (grossAmount, feePercent) => {
+    const feeAmount = new Decimal(grossAmount)
+        .mul(feePercent)
+        .div(100)
+        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const netAmount = new Decimal(grossAmount)
+        .minus(feeAmount)
+        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+
+    if (feeAmount.isNegative() || netAmount.isNegative()) {
+        throw new BusinessRuleError(
+            'Payment method fee produced an invalid net deposit amount.',
+            'INVALID_DEPOSIT_FEE_CALCULATION'
+        );
+    }
+
+    return {
+        feeAmount: feeAmount.toNumber(),
+        netAmount: netAmount.toNumber(),
+    };
 };
 
 const safeParseJson = (value) => {
@@ -102,6 +131,7 @@ const normalizeSenderDetails = (source = {}) => {
  * @param {string|null}     [params.transactionId]
  * @param {string|null}     [params.notes]
  * @param {Object|null}     [params.senderDetails]
+ * @param {Object|null}     [params.paymentMethodRequirements]
  * @param {Object|null}     [params.auditContext]
  *
  * @returns {Promise<DepositRequest>}
@@ -118,11 +148,22 @@ const createDepositRequest = async ({
     isElectronicWallet = false,
     notes = null,
     senderDetails = null,
+    paymentMethodRequirements = null,
     auditContext = null,
 }) => {
     // Confirm user exists (belt-and-suspenders — middleware already checks ACTIVE)
     const user = await User.findById(userId).select('_id role name email');
     if (!user) throw new NotFoundError('User');
+
+    // Controllers resolve this once to decide receipt/transaction-ID rules and
+    // pass it through. Direct service callers still resolve from the canonical
+    // payment-method service, so every newly created request gets a snapshot.
+    const resolvedPaymentMethod = paymentMethodRequirements
+        || await getDepositPaymentMethodRequirements(paymentMethodId);
+    const paymentMethodFeePercentSnapshot = normalizePaymentMethodFeePercent(
+        resolvedPaymentMethod?.paymentMethodFeePercent,
+        { allowMissing: true }
+    );
 
     const normalizedTransactionId = transactionId ? String(transactionId).trim() : null;
     if (isElectronicWallet && !normalizedTransactionId) {
@@ -158,6 +199,7 @@ const createDepositRequest = async ({
     const deposit = await DepositRequest.create({
         userId,
         paymentMethodId,
+        paymentMethodFeePercentSnapshot,
         transactionId: normalizedTransactionId,
         requestedAmount: Number(parseFloat(requestedAmount).toFixed(2)),
         currency,
@@ -184,6 +226,7 @@ const createDepositRequest = async ({
             currency,
             exchangeRate,
             amountUsd: deposit.amountUsd,
+            paymentMethodFeePercentSnapshot: deposit.paymentMethodFeePercentSnapshot,
             senderDetails,
         },
         ipAddress: auditContext?.ipAddress ?? null,
@@ -251,6 +294,9 @@ const approveDeposit = async (depositId, adminId, adminOverrides = {}, auditCont
     let updated;
     let finalAmount;
     let finalCurrency;
+    let paymentMethodFeePercent;
+    let paymentMethodFeeAmount;
+    let netAmount;
     let walletCurrency;
     let walletCreditAmount;
     let conversionNote;
@@ -276,16 +322,29 @@ const approveDeposit = async (depositId, adminId, adminOverrides = {}, auditCont
     }
 
     // ── Resolve final amount & currency (admin overrides take priority) ────
-    finalAmount = Number(parseFloat(
-        adminOverrides.amount ?? existing.requestedAmount
-    ).toFixed(2));
+    const finalAmountInput = Number(adminOverrides.amount ?? existing.requestedAmount);
+    if (!Number.isFinite(finalAmountInput)) {
+        throw new BusinessRuleError('Deposit amount must be a finite number.', 'INVALID_AMOUNT');
+    }
+    finalAmount = roundDepositMoney(finalAmountInput);
     finalCurrency = (
         adminOverrides.currency || existing.currency || 'USD'
     ).toUpperCase();
 
-    if (finalAmount <= 0) {
+    if (!Number.isFinite(finalAmount) || finalAmount <= 0) {
         throw new BusinessRuleError('Deposit amount must be greater than zero.', 'INVALID_AMOUNT');
     }
+
+    // The percentage was frozen at request creation. Legacy deposits that do
+    // not have this field retain their historical zero-fee behavior.
+    paymentMethodFeePercent = normalizePaymentMethodFeePercent(
+        existing.paymentMethodFeePercentSnapshot,
+        { allowMissing: true }
+    );
+    ({ feeAmount: paymentMethodFeeAmount, netAmount } = calculateDepositFee(
+        finalAmount,
+        paymentMethodFeePercent
+    ));
 
     // ── Atomic compare-and-swap on { _id, status: PENDING } ──────────────
     const $setFields = {
@@ -293,6 +352,9 @@ const approveDeposit = async (depositId, adminId, adminOverrides = {}, auditCont
         reviewedBy: adminId,
         reviewedAt: new Date(),
         reviewSource: adminOverrides.reviewSource || 'ADMIN',
+        paymentMethodFeePercentSnapshot: paymentMethodFeePercent,
+        paymentMethodFeeAmount,
+        netAmount,
     };
 
     if (adminOverrides.paymentEventId) {
@@ -336,30 +398,52 @@ const approveDeposit = async (depositId, adminId, adminOverrides = {}, auditCont
 
     if (finalCurrency === walletCurrency) {
         // Same currency — direct credit, no conversion loss
-        walletCreditAmount = finalAmount;
-        conversionNote = `${finalAmount} ${finalCurrency} (direct, no conversion)`;
+        walletCreditAmount = netAmount;
+        conversionNote = `${netAmount} ${finalCurrency} (direct, no conversion)`;
     } else {
         // Cross-currency: finalCurrency → USD → walletCurrency
         const { getConversionRate } = require('../../services/currencyConverter.service');
         const fromRate = await getConversionRate(finalCurrency);   // e.g. EGP → 1 USD = 50 EGP  → rate=50
         const toRate   = await getConversionRate(walletCurrency);  // e.g. SAR → 1 USD = 3.75 SAR → rate=3.75
 
-        const amountInUsd = Number((finalAmount / fromRate).toFixed(6));
-        walletCreditAmount = Number((amountInUsd * toRate).toFixed(2));
-        conversionNote = `${finalAmount} ${finalCurrency} → ${amountInUsd} USD → ${walletCreditAmount} ${walletCurrency}`;
+        const amountInUsd = Number((netAmount / fromRate).toFixed(6));
+        walletCreditAmount = roundDepositMoney(new Decimal(amountInUsd).mul(toRate));
+        conversionNote = `${netAmount} ${finalCurrency} → ${amountInUsd} USD → ${walletCreditAmount} ${walletCurrency}`;
     }
+
+    if (!Number.isFinite(walletCreditAmount) || walletCreditAmount < 0) {
+        throw new BusinessRuleError(
+            'Payment method fee produced an invalid wallet credit amount.',
+            'INVALID_DEPOSIT_FEE_CALCULATION'
+        );
+    }
+
+    // Keep the financial result on the same document that was atomically
+    // approved. This update is transaction-scoped and cannot affect old
+    // approved deposits.
+    await DepositRequest.updateOne(
+        { _id: updated._id },
+        { $set: { walletCreditAmount } },
+        { session }
+    );
+    updated.walletCreditAmount = walletCreditAmount;
 
     await runTestHook(testHooks.beforeWalletUpdate, { deposit: updated });
 
     // Credit the wallet
-    await creditWalletDirect({
-        userId: updated.userId,
-        amount: walletCreditAmount,
-        reference: updated._id,
-        description: `Deposit #${updated._id.toString().slice(-6)} (${finalAmount} ${finalCurrency})`,
-        session,
-        testHooks: testHooks.wallet,
-    });
+    // A valid 100% fee has a zero net credit. The wallet ledger forbids zero
+    // amount entries, so approval records the zero result without a fake
+    // wallet transaction or balance mutation.
+    if (walletCreditAmount > 0) {
+        await creditWalletDirect({
+            userId: updated.userId,
+            amount: walletCreditAmount,
+            reference: updated._id,
+            description: `Deposit #${updated._id.toString().slice(-6)} (${finalAmount} ${finalCurrency}, fee ${paymentMethodFeeAmount} ${finalCurrency}, net ${netAmount} ${finalCurrency})`,
+            session,
+            testHooks: testHooks.wallet,
+        });
+    }
 
     await runTestHook(testHooks.afterWalletCreditBeforeCommission, { deposit: updated });
 
@@ -391,11 +475,15 @@ const approveDeposit = async (depositId, adminId, adminOverrides = {}, auditCont
             userId: updated.userId.toString(),
             finalAmount,
             finalCurrency,
+            paymentMethodFeePercent,
+            paymentMethodFeeAmount,
+            netAmount,
             originalRequestedAmount: existing.requestedAmount,
             originalCurrency: existing.currency,
             adminOverrideApplied: !!(adminOverrides.amount || adminOverrides.currency),
             walletCurrency,
             walletCreditAmount,
+            walletCreditSkipped: walletCreditAmount === 0,
             conversionNote,
             referralCommissionOutcome: commissionOutcome?.outcome ?? null,
             referralCommissionId: commissionOutcome?.commission?._id?.toString() ?? null,
@@ -412,8 +500,14 @@ const approveDeposit = async (depositId, adminId, adminOverrides = {}, auditCont
         entityId: updated.userId,
         metadata: {
             depositId: updated._id.toString(),
+            finalAmount,
+            finalCurrency,
+            paymentMethodFeePercent,
+            paymentMethodFeeAmount,
+            netAmount,
             walletCurrency,
             walletCreditAmount,
+            walletCreditSkipped: walletCreditAmount === 0,
             reason: 'DEPOSIT_APPROVED',
         },
     });
