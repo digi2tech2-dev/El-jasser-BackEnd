@@ -47,6 +47,8 @@ const {
     createUserWithReferralCodeRetry,
 } = require('../referrals/referral.service');
 const { normalizePhone } = require('../../shared/utils/phone');
+const { resolveGoogleUser } = require('./googleOAuth.service');
+const { verifyGoogleIdToken } = require('./googleIdToken.service');
 
 // ─── Private Helpers ──────────────────────────────────────────────────────────
 
@@ -461,7 +463,7 @@ const issueGoogleProfileCompletionToken = async (user) => {
     return rawToken;
 };
 
-const loginWithGoogle = async (user) => {
+const loginWithGoogle = async (user, { method = 'google-oauth' } = {}) => {
     if (user.status === USER_STATUS.PENDING) {
         // Return a token-less response so the frontend can show the approval message.
         // Some frontends prefer a token even for pending users; adjust as needed.
@@ -500,10 +502,23 @@ const loginWithGoogle = async (user) => {
         action: USER_ACTIONS.LOGIN_SUCCESS,
         entityType: ENTITY_TYPES.USER,
         entityId: user._id,
-        metadata: { email: user.email, method: 'google-oauth' },
+        metadata: { email: user.email, method },
     });
 
     return { status: 'LOGIN_COMPLETE', token, user: user.toSafeObject() };
+};
+
+const loginWithNativeGoogle = async ({ idToken, intent, referralCode }) => {
+    const identity = await verifyGoogleIdToken(idToken);
+    const { user } = await resolveGoogleUser({
+        id: identity.sub,
+        emails: [{ value: identity.email }],
+        displayName: identity.name || identity.given_name || identity.email,
+    }, {
+        intent: intent === 'signup' ? 'signup' : 'login',
+        referralCode,
+    });
+    return loginWithGoogle(user, { method: 'google-native' });
 };
 
 const completeGoogleProfile = async ({ completionToken, country, currency, phone }) => {
@@ -811,6 +826,7 @@ module.exports = {
     verifyEmail,
     resendVerification,
     loginWithGoogle,
+    loginWithNativeGoogle,
     completeGoogleProfile,
     generate2FASecret,
     enable2FA,

@@ -41,6 +41,7 @@ const { createUpload } = require('../../shared/middlewares/upload');
 const { BusinessRuleError } = require('../../shared/errors/AppError');
 const { body, param, query } = require('express-validator');
 const validate = require('../../shared/middlewares/validate');
+const devicePushController = require('../devices/devicePush.controller');
 
 const depositUpload = createUpload('deposits');
 const orderFieldUpload = createUpload('order-fields');
@@ -60,6 +61,22 @@ router.use(authenticate, requireActiveUser);
  */
 router.get('/', me.getProfile);
 router.get('/quota', me.getQuota);
+
+router.post(
+    '/devices/push',
+    [
+        body('token').isString().trim().isLength({ min: 20, max: 4096 }),
+        body('platform').equals('android'),
+    ],
+    validate,
+    devicePushController.register
+);
+router.delete(
+    '/devices/push',
+    [body('token').isString().trim().isLength({ min: 20, max: 4096 })],
+    validate,
+    devicePushController.unregister
+);
 
 router.post('/api-token/generate', me.generateApiToken);
 

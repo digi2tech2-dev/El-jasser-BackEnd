@@ -134,6 +134,15 @@ const completeGoogleProfile = catchAsync(async (req, res) => {
     sendSuccess(res, result, 'Profile completed successfully.');
 });
 
+const nativeGoogleLogin = catchAsync(async (req, res) => {
+    const result = await authService.loginWithNativeGoogle({
+        idToken: req.body.idToken,
+        intent: req.body.intent,
+        referralCode: req.body.referralCode,
+    });
+    sendSuccess(res, result, 'Google sign-in completed.');
+});
+
 // ─── Two-Factor Authentication ────────────────────────────────────────────────
 
 /**
@@ -183,6 +192,7 @@ module.exports = {
     resendVerification,
     googleCallback,
     completeGoogleProfile,
+    nativeGoogleLogin,
     generate2FA,
     enable2FA,
     disable2FA,

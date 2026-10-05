@@ -182,6 +182,18 @@ router.get('/google/failure', (req, res) => {
     }));
 });
 
+router.post(
+    '/google/native',
+    authLimiter,
+    [
+        body('idToken').isString().trim().isLength({ min: 20, max: 12000 }),
+        body('intent').optional().isIn(['login', 'signup']),
+        body('referralCode').optional().isString().trim().isLength({ max: 64 }),
+    ],
+    validate,
+    authController.nativeGoogleLogin
+);
+
 // ─── Two-Factor Authentication ─────────────────────────────────────────────────────
 
 /**

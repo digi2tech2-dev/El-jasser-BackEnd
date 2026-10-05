@@ -39,8 +39,29 @@
  */
 
 const { Notification, NOTIFICATION_TYPE, NOTIFICATION_SCOPE } = require('./notification.model');
-const { User } = require('../users/user.model');
+const { User, USER_STATUS } = require('../users/user.model');
 const { NotFoundError, BusinessRuleError } = require('../../shared/errors/AppError');
+const {
+    sendNotificationToUser,
+    sendNotificationToUsers,
+} = require('../../services/firebasePush.service');
+
+const dispatchPushToUsers = (userIds, notification) => {
+    sendNotificationToUsers({ userIds, notification }).catch((err) => {
+        console.error(`[Notification] push dispatch failed: ${err.message}`);
+    });
+};
+
+// Broadcast documents are visible through the authenticated /api/me inbox,
+// whose routes require active users. Keep one broadcast document and target the
+// same active, non-deleted audience for FCM without per-user DB fanout.
+const getBroadcastAudienceUserIds = async () => {
+    const users = await User.find({
+        status: USER_STATUS.ACTIVE,
+        deletedAt: null,
+    }).select('_id').lean();
+    return users.map((user) => user._id);
+};
 
 // =============================================================================
 // INTERNAL SAFE WRAPPER
@@ -91,7 +112,9 @@ const notifyAdminsAndSupervisors = ({ title, message, type = NOTIFICATION_TYPE.I
             source,
         }));
 
-        return Notification.insertMany(docs, { ordered: false });
+        const notifications = await Notification.insertMany(docs, { ordered: false });
+        dispatchPushToUsers(recipients.map((recipient) => recipient._id), { title, message, type, link });
+        return notifications;
     });
 };
 
@@ -112,8 +135,8 @@ const notifyAdminsAndSupervisors = ({ title, message, type = NOTIFICATION_TYPE.I
  * @param {string}          [params.source='SYSTEM']
  */
 const notifyUser = ({ userId, title, message, type = NOTIFICATION_TYPE.INFO, link = null, source = 'SYSTEM' }) => {
-    return _safe('notifyUser', () =>
-        Notification.create({
+    return _safe('notifyUser', async () => {
+        const notification = await Notification.create({
             userId,
             title,
             message,
@@ -121,8 +144,15 @@ const notifyUser = ({ userId, title, message, type = NOTIFICATION_TYPE.INFO, lin
             scope: NOTIFICATION_SCOPE.USER,
             link,
             source,
-        })
-    );
+        });
+
+        // Persistence is the primary operation. FCM is deliberately detached
+        // so a vendor outage can never fail or roll back the business event.
+        sendNotificationToUser({ userId, notification }).catch((err) => {
+            console.error(`[Notification] push dispatch failed: ${err.message}`);
+        });
+        return notification;
+    });
 };
 
 /**
@@ -130,8 +160,8 @@ const notifyUser = ({ userId, title, message, type = NOTIFICATION_TYPE.INFO, lin
  * SAFE: catches its own errors.
  */
 const notifyBroadcast = ({ title, message, type = NOTIFICATION_TYPE.INFO, link = null, source = 'ADMIN' }) => {
-    return _safe('notifyBroadcast', () =>
-        Notification.create({
+    return _safe('notifyBroadcast', async () => {
+        const notification = await Notification.create({
             userId: null,
             title,
             message,
@@ -139,8 +169,12 @@ const notifyBroadcast = ({ title, message, type = NOTIFICATION_TYPE.INFO, link =
             scope: NOTIFICATION_SCOPE.BROADCAST,
             link,
             source,
-        })
-    );
+        });
+        getBroadcastAudienceUserIds()
+            .then((userIds) => dispatchPushToUsers(userIds, notification))
+            .catch((err) => console.error(`[Notification] broadcast audience resolution failed: ${err.message}`));
+        return notification;
+    });
 };
 
 /**
@@ -166,7 +200,9 @@ const notifyGroup = (groupId, { title, message, type = NOTIFICATION_TYPE.INFO, l
             source,
         }));
 
-        return Notification.insertMany(docs, { ordered: false });
+        const notifications = await Notification.insertMany(docs, { ordered: false });
+        dispatchPushToUsers(users.map((user) => user._id), { title, message, type, link });
+        return notifications;
     });
 };
 
@@ -502,6 +538,9 @@ const adminSendNotification = async ({
             link,
             source: 'ADMIN',
         });
+        getBroadcastAudienceUserIds()
+            .then((userIds) => dispatchPushToUsers(userIds, notification))
+            .catch((err) => console.error(`[Notification] broadcast audience resolution failed: ${err.message}`));
         return { sent: 1, mode: 'broadcast', notification };
     }
 
@@ -526,6 +565,7 @@ const adminSendNotification = async ({
         }));
 
         const result = await Notification.insertMany(docs, { ordered: false });
+        dispatchPushToUsers(users.map((user) => user._id), { title, message, type, link });
         return { sent: result.length, mode: 'group', groupId };
     }
 
@@ -542,6 +582,9 @@ const adminSendNotification = async ({
             scope: NOTIFICATION_SCOPE.USER,
             link,
             source: 'ADMIN',
+        });
+        sendNotificationToUser({ userId, notification }).catch((err) => {
+            console.error(`[Notification] push dispatch failed: ${err.message}`);
         });
         return { sent: 1, mode: 'user', notification };
     }
