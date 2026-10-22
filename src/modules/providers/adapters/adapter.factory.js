@@ -36,6 +36,7 @@ const { AlkasrVipAdapter } = require('./alkasr.adapter');
 const { IbraAdapter } = require('./ibra.adapter');
 const { DealerApiAdapter } = require('./dealerApi.service');
 const { CanonicalB2BAdapter } = require('./canonicalB2B.adapter');
+const { BrandOneCardAdapter } = require('./brandOneCard.adapter');
 
 const assertProductionAdapterAllowed = (AdapterClass, provider, { strict = false } = {}) => {
     const byAdapterType = (provider.adapterType ?? '').toLowerCase().trim();
@@ -65,6 +66,10 @@ const assertProductionAdapterAllowed = (AdapterClass, provider, { strict = false
 //
 const registry = new Map([
     ['canonical-b2b', CanonicalB2BAdapter],
+    // Brand One Card is a separate provider from brand1-card below.
+    ['brand-one-card', BrandOneCardAdapter],
+    ['brand one card', BrandOneCardAdapter],
+    ['brandonecard', BrandOneCardAdapter],
     // ── Royal Crown ──────────────────────────────────────────────────────────
     ['royal-crown', RoyalCrownAdapter],   // slug
     ['royal crown', RoyalCrownAdapter],   // name (lowercase)
