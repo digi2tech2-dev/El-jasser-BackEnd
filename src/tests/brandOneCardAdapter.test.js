@@ -4,6 +4,9 @@ const axios = require('axios');
 const { BrandOneCardAdapter } = require('../modules/providers/adapters/brandOneCard.adapter');
 const { AlkasrVipAdapter } = require('../modules/providers/adapters/alkasr.adapter');
 const { getAdapter, getProviderAdapter } = require('../modules/providers/adapters/adapter.factory');
+const currencyConverter = require('../services/currencyConverter.service');
+const { Currency } = require('../modules/currency/currency.model');
+const priceCache = require('../modules/providers/providerPriceCache');
 
 const provider = { name: 'Brand One Card', slug: 'brand-one-card', baseUrl: 'https://api.brand-one-card.com/', apiToken: 'test-token' };
 const makeAdapter = () => {
@@ -32,7 +35,7 @@ describe('BrandOneCardAdapter', () => {
         const product = { id: 365, name: 'UC 60', price: 0.104, currency: 'USD', available: true,
             qty_values: { min: 1, max: 15000 }, product_type: 'amount', params: ['playerId'],
             params_info: [{ key: 'playerId', required: true }], category_name: 'PUBG' };
-        client.get.mockResolvedValueOnce({ data: [product, { id: 366, name: 'Code', price: 5, available: false, qty_values: null, product_type: 'package' }] });
+        client.get.mockResolvedValueOnce({ data: [product, { id: 366, name: 'Code', price: 5, currency: 'USD', available: false, qty_values: null, product_type: 'package' }] });
         expect(await adapter.fetchProducts()).toEqual([
             expect.objectContaining({ externalProductId: '365', rawPrice: '0.104', minQty: 1, maxQty: 15000, isActive: true, rawPayload: product }),
             expect.objectContaining({ externalProductId: '366', minQty: 1, maxQty: 1, isActive: false }),
@@ -40,14 +43,80 @@ describe('BrandOneCardAdapter', () => {
         expect(client.get).toHaveBeenCalledWith('/client/api/products');
     });
 
-    test('rejects catalog errors and unsupported currencies instead of syncing a misleading catalog', async () => {
+    test('rejects catalog API errors and malformed lists', async () => {
         const { adapter, client } = makeAdapter();
         client.get.mockResolvedValueOnce({ data: { status: 'ERROR', code: 121, msg: 'Token error' } });
         await expect(adapter.getProducts()).rejects.toThrow('Token error');
-        client.get.mockResolvedValueOnce({ data: [{ id: 1, name: 'EGP', price: 10, currency: 'EGP' }] });
-        await expect(adapter.getProducts()).rejects.toThrow('supports USD only');
         client.get.mockResolvedValueOnce({ data: {} });
         await expect(adapter.getProducts()).rejects.toThrow('Invalid product list');
+    });
+
+    test('converts EGP using the configured platform rate, preserving source metadata and micro-prices', async () => {
+        const { adapter, client } = makeAdapter();
+        currencyConverter.invalidateCurrencyCache('EGP');
+        const query = jest.spyOn(Currency, 'findOne').mockResolvedValue({ code: 'EGP', platformRate: 50, marketRate: 49, isActive: true });
+        const product = { id: 7, name: 'UC', price: '52', base_price: '55', currency: 'EGP', qty_values: { min: 1, max: 15000 } };
+        client.get.mockResolvedValueOnce({ data: [product, { ...product, id: 8, price: '0.00000001', currency: ' egp ' }] });
+        const products = await adapter.getProducts();
+        expect(products[0]).toMatchObject({ rawPrice: '1.04', rawPayload: product });
+        expect(products[1].rawPrice).toBe('0.0000000002');
+        expect(query).toHaveBeenCalledTimes(1);
+        expect(query).toHaveBeenCalledWith({ code: 'EGP' });
+        expect(product.price).toBe('52');
+        currencyConverter.invalidateCurrencyCache('EGP');
+    });
+
+    test('resolves mixed currencies once per catalog and never converts USD twice', async () => {
+        const { adapter, client } = makeAdapter();
+        const rate = jest.spyOn(currencyConverter, 'getConversionRate').mockImplementation(async (code) => ({ EGP: 50, SAR: 3.75 })[code]);
+        client.get.mockResolvedValueOnce({ data: [
+            { id: 1, name: 'EGP', price: '50', currency: 'EGP' },
+            { id: 2, name: 'USD', price: '1.23456789', currency: 'USD' },
+            { id: 3, name: 'SAR', price: '7.5', currency: 'SAR' },
+            { id: 4, name: 'EGP again', price: '100', currency: 'EGP' },
+        ] });
+        expect((await adapter.getProducts()).map((p) => p.rawPrice)).toEqual(['1', '1.23456789', '2', '2']);
+        expect(rate).toHaveBeenCalledTimes(2);
+    });
+
+    test('uses profile currency when product currency is absent', async () => {
+        const { adapter, client } = makeAdapter();
+        jest.spyOn(currencyConverter, 'getConversionRate').mockResolvedValue(50);
+        client.get.mockResolvedValueOnce({ data: [{ id: 7, name: 'UC', price: '125' }] })
+            .mockResolvedValueOnce({ data: { balance: '0', currency: 'EGP' } });
+        expect((await adapter.getProducts())[0].rawPrice).toBe('2.5');
+        expect(client.get).toHaveBeenLastCalledWith('/client/api/profile');
+    });
+
+    test('fails clearly when neither catalog nor profile identifies the currency', async () => {
+        const { adapter, client } = makeAdapter();
+        client.get.mockResolvedValueOnce({ data: [{ id: 7, name: 'UC', price: '125' }] })
+            .mockResolvedValueOnce({ data: { balance: '0' } });
+        await expect(adapter.getProducts()).rejects.toMatchObject({ statusCode: 422, code: 'PROVIDER_CURRENCY_MISSING' });
+    });
+
+    test.each([null, { code: 'EGP', platformRate: 50, isActive: false }])('reports a missing or disabled currency as an actionable configuration error: %j', async (currency) => {
+        const { adapter, client } = makeAdapter();
+        currencyConverter.invalidateCurrencyCache('EGP');
+        jest.spyOn(Currency, 'findOne').mockResolvedValue(currency);
+        client.get.mockResolvedValueOnce({ data: [{ id: 7, name: 'UC', price: '50', currency: 'EGP' }] });
+        await expect(adapter.getProducts()).rejects.toMatchObject({ statusCode: 422, code: 'PROVIDER_CURRENCY_RATE_UNAVAILABLE', message: expect.stringContaining('EGP') });
+    });
+
+    test.each([0, -1, NaN, Infinity, undefined, 'invalid'])('refuses invalid conversion rate %s', async (rate) => {
+        const { adapter, client } = makeAdapter();
+        jest.spyOn(currencyConverter, 'getConversionRate').mockResolvedValue(rate);
+        client.get.mockResolvedValueOnce({ data: [{ id: 7, name: 'UC', price: '50', currency: 'EGP' }] });
+        await expect(adapter.getProducts()).rejects.toMatchObject({ code: 'PROVIDER_CURRENCY_RATE_UNAVAILABLE' });
+    });
+
+    test('live order price checks receive USD instead of the original EGP amount', async () => {
+        const { adapter, client } = makeAdapter();
+        priceCache.clearAll();
+        jest.spyOn(currencyConverter, 'getConversionRate').mockResolvedValue(50);
+        client.get.mockResolvedValueOnce({ data: [{ id: 7, name: 'UC', price: '52', currency: 'EGP' }] });
+        await expect(priceCache.getLivePrice('brand-one-test', '7', adapter)).resolves.toBe('1.04');
+        priceCache.clearAll();
     });
 
     test.each([['accept', 'Completed', true], ['wait', 'Pending', true], ['reject', 'Cancelled', false], ['unknown', 'Pending', true]])(

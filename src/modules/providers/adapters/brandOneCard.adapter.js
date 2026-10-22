@@ -3,6 +3,9 @@
 // Brand One Card (api.brand-one-card.com), independent of brand1-card.
 const axios = require('axios');
 const { BaseProviderAdapter } = require('./base.adapter');
+const currencyConverter = require('../../../services/currencyConverter.service');
+const { divide } = require('../../../shared/utils/decimalPrecision');
+const { BusinessRuleError } = require('../../../shared/errors/AppError');
 
 const INTERNAL_KEYS = new Set([
     'productId', 'externalProductId', 'providerProductId', 'providerId',
@@ -47,22 +50,50 @@ class BrandOneCardAdapter extends BaseProviderAdapter {
         const { data } = await this._client.get('/client/api/products');
         assertApiSuccess(data);
         if (!Array.isArray(data)) throw new Error('[BrandOneCard] Invalid product list');
+        // Prices are denominated in the account currency. The rest of the
+        // platform (sync, live price checks and publishing) expects USD DTOs.
+        // Resolve each rate once per catalog, before any products are written.
+        const currencyCode = (value) => String(value ?? '').trim().toUpperCase();
+        let accountCurrency;
+        if (data.some((product) => !currencyCode(product.currency))) {
+            accountCurrency = currencyCode((await this.getBalance())?.currency);
+            if (!accountCurrency) {
+                throw new BusinessRuleError('Brand One Card لم يرجع عملة الحساب؛ تعذر تحديد عملة أسعار المنتجات.', 'PROVIDER_CURRENCY_MISSING');
+            }
+        }
+        const rates = new Map([['USD', 1]]);
+        for (const product of data) {
+            const currency = currencyCode(product.currency) || accountCurrency;
+            if (rates.has(currency)) continue;
+            let rate;
+            try {
+                rate = await currencyConverter.getConversionRate(currency);
+            } catch (error) {
+                if (!['NOT_FOUND', 'CURRENCY_INACTIVE', 'MISSING_CURRENCY_CODE'].includes(error.code)) throw error;
+                throw new BusinessRuleError(`تعذر تحويل أسعار Brand One Card من ${currency} إلى USD. أضف العملة وفعّلها وحدد سعر صرفها في إعدادات العملات.`, 'PROVIDER_CURRENCY_RATE_UNAVAILABLE');
+            }
+            if (!Number.isFinite(Number(rate)) || Number(rate) <= 0) {
+                throw new BusinessRuleError(`سعر صرف ${currency} غير صالح؛ يجب أن يكون أكبر من صفر.`, 'PROVIDER_CURRENCY_RATE_UNAVAILABLE');
+            }
+            rates.set(currency, rate);
+        }
         return data.map((product) => {
             if (product.id == null) throw new Error('[BrandOneCard] Product ID is missing');
-            // The platform currently interprets provider prices as USD.
-            if (product.currency && String(product.currency).toUpperCase() !== 'USD') {
-                throw new Error(`[BrandOneCard] Product ${product.id} declares ${product.currency}; the provider price pipeline supports USD only.`);
-            }
+            const currency = currencyCode(product.currency) || accountCurrency;
+            const rate = rates.get(currency);
             const minQty = Number(product.qty_values?.min ?? 1);
             const maxQty = Number(product.qty_values?.max ?? 1);
             if (!Number.isInteger(minQty) || !Number.isInteger(maxQty) || minQty < 1 || maxQty < minQty) {
                 throw new Error(`[BrandOneCard] Invalid quantity range for product ${product.id}`);
             }
-            return this._validateDTO({
+            const dto = this._validateDTO({
                 externalProductId: String(product.id), rawName: product.name,
                 rawPrice: product.price, minQty, maxQty,
                 isActive: product.available !== false, rawPayload: product,
             });
+            // Divide as decimal strings so micro-prices never round to zero.
+            dto.rawPrice = divide(dto.rawPrice, rate);
+            return dto;
         });
     }
 
