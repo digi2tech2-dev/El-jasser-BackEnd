@@ -185,6 +185,12 @@ const registry = new Map([
     ['syria card', AlkasrVipAdapter], // name
     ['syriacard', AlkasrVipAdapter],  // compact
 
+ // ── bit-card (Uses Alkasr Adapter) ─────────────────────────────────────
+    ['bit-card', AlkasrVipAdapter], // slug
+    ['bit card', AlkasrVipAdapter], // name
+    ['bitcard', AlkasrVipAdapter],  // compact
+
+
 
     // -- Ibra Store ------------------------------------------------------------
     ['ibra-store', IbraAdapter],
