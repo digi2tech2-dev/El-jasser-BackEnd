@@ -70,6 +70,7 @@ const registry = new Map([
     ['brand-one-card', BrandOneCardAdapter],
     ['brand one card', BrandOneCardAdapter],
     ['brandonecard', BrandOneCardAdapter],
+
     // ── Royal Crown ──────────────────────────────────────────────────────────
     ['royal-crown', RoyalCrownAdapter],   // slug
     ['royal crown', RoyalCrownAdapter],   // name (lowercase)
@@ -92,6 +93,11 @@ const registry = new Map([
     ['brand1-card', AlkasrVipAdapter], // slug
     ['brand1 card', AlkasrVipAdapter], // name
     ['brand1card', AlkasrVipAdapter],  // compact
+
+    // ── yoyo-mo (Uses Alkasr Adapter) ─────────────────────────────────────────
+    ['yoyo-mo', AlkasrVipAdapter], // slug
+    ['yoyo mo', AlkasrVipAdapter], // name
+    ['yoyomo', AlkasrVipAdapter],  // compact
 
     // ── zero1-store (Uses Alkasr Adapter) ─────────────────────────────────────
     ['zero1-store', AlkasrVipAdapter], // slug
