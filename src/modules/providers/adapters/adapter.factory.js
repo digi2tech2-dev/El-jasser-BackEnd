@@ -37,6 +37,7 @@ const { IbraAdapter } = require('./ibra.adapter');
 const { DealerApiAdapter } = require('./dealerApi.service');
 const { CanonicalB2BAdapter } = require('./canonicalB2B.adapter');
 const { BrandOneCardAdapter } = require('./brandOneCard.adapter');
+const { AlmotasimCardAdapter } = require('./almotasimCard.adapter');
 
 const assertProductionAdapterAllowed = (AdapterClass, provider, { strict = false } = {}) => {
     const byAdapterType = (provider.adapterType ?? '').toLowerCase().trim();
@@ -65,6 +66,12 @@ const assertProductionAdapterAllowed = (AdapterClass, provider, { strict = false
 // so the lookup works regardless of whether provider.slug is set.
 //
 const registry = new Map([
+    ['almotasim-card', AlmotasimCardAdapter],
+    ['almotasim card', AlmotasimCardAdapter],
+    ['almotasimcard', AlmotasimCardAdapter],
+    ['almotasim', AlmotasimCardAdapter],
+    ['المعتصم', AlmotasimCardAdapter],
+    ['المعتصم كارد', AlmotasimCardAdapter],
     ['canonical-b2b', CanonicalB2BAdapter],
     // Brand One Card is a separate provider from brand1-card below.
     ['brand-one-card', BrandOneCardAdapter],
