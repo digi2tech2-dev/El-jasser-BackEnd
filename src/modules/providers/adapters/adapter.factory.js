@@ -38,6 +38,7 @@ const { DealerApiAdapter } = require('./dealerApi.service');
 const { CanonicalB2BAdapter } = require('./canonicalB2B.adapter');
 const { BrandOneCardAdapter } = require('./brandOneCard.adapter');
 const { AlmotasimCardAdapter } = require('./almotasimCard.adapter');
+const { JasserCardAdapter } = require('./jasserCard.adapter');
 
 const assertProductionAdapterAllowed = (AdapterClass, provider, { strict = false } = {}) => {
     const byAdapterType = (provider.adapterType ?? '').toLowerCase().trim();
@@ -66,6 +67,10 @@ const assertProductionAdapterAllowed = (AdapterClass, provider, { strict = false
 // so the lookup works regardless of whether provider.slug is set.
 //
 const registry = new Map([
+    ['jasser-card', JasserCardAdapter],
+    ['jasser card', JasserCardAdapter],
+    ['jassercard', JasserCardAdapter],
+    ['جاسر كارد', JasserCardAdapter],
     ['almotasim-card', AlmotasimCardAdapter],
     ['almotasim card', AlmotasimCardAdapter],
     ['almotasimcard', AlmotasimCardAdapter],
