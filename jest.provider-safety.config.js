@@ -11,6 +11,8 @@ module.exports = {
         '**/src/tests/canonicalFactory.test.js',
         '**/src/tests/canonicalB2BAdapter.test.js',
         '**/src/tests/jasserCardAdapter.test.js',
+        '**/src/tests/jasserCardCatalogSync.test.js',
+        '**/src/tests/jasserCardDiagnostic.test.js',
         '**/src/tests/almotasimCardAdapter.test.js',
         '**/src/tests/brandOneCardAdapter.test.js',
     ],

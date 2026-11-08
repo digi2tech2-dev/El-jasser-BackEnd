@@ -44,6 +44,58 @@ rules mean exactly one; range bounds become `minQty`/`maxQty`. Discrete choices
 remain in `rawPayload.qty_values`; configure the product UI accordingly. The
 supplier validates discrete choices and responds with a rejection for invalid ones.
 
+### Catalog quantity correction — 2026-11-09
+
+The server diagnostic identified product **1594**, `Halo Star هالو ستار`, with
+`product_type: "range"` and numeric `qty_values: { min: 500000, max: 99999999.9999 }`.
+The old adapter rejected the finite decimal maximum because it required a safe
+integer. The adapter now retains finite positive range maxima without rounding;
+minima remain positive safe integers and cannot exceed the maximum. Fixed-quantity
+and discrete-choice products retain their interpretation. Customer purchase
+quantities must still be positive safe integers; a decimal catalog ceiling never
+permits decimal purchases.
+
+Published Jasser product bounds use the same validation and retain the decimal
+maximum. The shared sync engine uses this Jasser-only opt-in hook; other suppliers
+retain their existing validation. An invalid product rejects the entire fetched
+catalog before any writes. If an upsert fails, Jasser sync raises an explicit
+incomplete-catalog error and skips publication. Some successful raw upserts may
+already exist at that point; the batch is not a database transaction.
+
+Missing Jasser products are **never deactivated solely because they are absent**
+from the supplier response. This includes product **1537**, which the server
+diagnostic did not find in the current full catalog. Explicit availability values
+on products that are returned continue to be stored normally.
+
+To investigate 1537 without database writes, use this read-only diagnostic on the
+server (it reads `.env` and the stored provider configuration):
+
+```bash
+cd /srv/DIGI-TECH/EL-JASSER/backend
+node scripts/diagnose-jasser-catalog.cjs
+```
+
+It uses the adapter's existing client to fetch the full product list. If 1537 is
+absent, it also requests `GET /client/api/products?products_id=1537`. The report
+distinguishes full-list omission, absence from both lists, known supplier error
+codes and HTTP failures. Neither absence nor an error alone proves deletion or
+loss of account access; those causes require supplier confirmation. Only the
+requested product fields/types and safe diagnostic labels are printed, never
+credentials, account profiles, headers or raw error messages. No sync is executed.
+
+The database-free regression suite is:
+
+```bash
+node node_modules/jest/bin/jest.js --config jest.provider-safety.config.js --runInBand
+```
+
+Verification on 2026-11-09: **364 tests passed across 10 suites** in the
+database-free regression suite. The full local suite (disposable MongoDB only)
+completed with **1162 passed, 1 failed; 48 suites passed, 1 failed**. The sole
+failure is the previously documented `brandOneCardSync.test.js` unmocked
+`providerproducts.findOne()` timeout, unrelated to the Jasser changes. No supplier
+API calls or production database writes were performed during these tests.
+
 ## Order safety
 
 Each platform order number deterministically derives a UUIDv4-shaped idempotency

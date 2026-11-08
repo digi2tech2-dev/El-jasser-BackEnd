@@ -50,9 +50,48 @@ const failure = (message, rawResponse = null, providerOrderId = null) => ({
     success: false, providerOrderId, providerStatus: 'Cancelled', rawResponse, errorMessage: String(message),
 });
 
+const quantityError = (productId, reason) => {
+    throw new Error(`[JasserCard] Invalid quantity rules for product ${productId}: ${reason}`);
+};
+const quantityNumber = (value, productId, field) => {
+    if ((typeof value !== 'number' && typeof value !== 'string')
+        || (typeof value === 'string' && !/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim()))
+        || !Number.isFinite(Number(value))) {
+        return quantityError(productId, `${field} must be a finite decimal number`);
+    }
+    return Number(value);
+};
+const quantityBounds = (minQty, maxQty, productId) => {
+    if (!Number.isSafeInteger(minQty) || minQty < 1) quantityError(productId, 'min must be a positive safe integer');
+    if (!Number.isFinite(maxQty) || maxQty < minQty) quantityError(productId, 'max must be finite and >= min');
+    return { minQty, maxQty };
+};
+
+// Only the documented forms are accepted. Unknown shapes must not silently
+// become a fixed-quantity product or disappear from a partial catalog response.
+const parseQuantityRules = (rules, productId) => {
+    if (rules == null) return { minQty: 1, maxQty: 1 };
+    if (Array.isArray(rules)) {
+        if (!rules.length) quantityError(productId, 'quantity choices must not be empty');
+        const choices = rules.map((value) => quantityNumber(value, productId, 'choice'));
+        if (choices.some((qty) => !Number.isSafeInteger(qty) || qty < 1)) {
+            quantityError(productId, 'quantity choices must be positive safe integers');
+        }
+        return quantityBounds(Math.min(...choices), Math.max(...choices), productId);
+    }
+    if (typeof rules !== 'object' || !Object.prototype.hasOwnProperty.call(rules, 'min')
+        || !Object.prototype.hasOwnProperty.call(rules, 'max')) {
+        quantityError(productId, 'expected null, a quantity choices array, or an object with min and max');
+    }
+    return quantityBounds(quantityNumber(rules.min, productId, 'min'), quantityNumber(rules.max, productId, 'max'), productId);
+};
+
 class JasserCardAdapter extends BaseProviderAdapter {
     constructor(provider, options = {}) {
         super(provider, options);
+        this.requiresCompleteCatalogSync = true;
+        // Catalog omission does not prove deletion or unavailability (e.g. 1537).
+        this.deactivateMissingCatalogProducts = false;
         const token = this._resolveToken();
         if (!provider.baseUrl) throw new Error('[JasserCard] provider.baseUrl is required');
         if (!token) throw new Error('[JasserCard] api token (apiToken / apiKey) is required');
@@ -77,14 +116,7 @@ class JasserCardAdapter extends BaseProviderAdapter {
         if (!Array.isArray(data)) throw new Error('[JasserCard] Invalid product list');
         return data.map((product) => {
             if (product.id == null) throw new Error('[JasserCard] Missing product ID');
-            const rules = product.qty_values;
-            const quantities = Array.isArray(rules) ? rules.map(Number) : null;
-            const minQty = quantities ? Math.min(...quantities) : Number(rules?.min ?? 1);
-            const maxQty = quantities ? Math.max(...quantities) : Number(rules?.max ?? 1);
-            if (!Number.isSafeInteger(minQty) || !Number.isSafeInteger(maxQty) || minQty < 1 || maxQty < minQty
-                || quantities?.some((qty) => !Number.isSafeInteger(qty) || qty < 1)) {
-                throw new Error(`[JasserCard] Invalid quantity rules for product ${product.id}`);
-            }
+            const { minQty, maxQty } = parseQuantityRules(product.qty_values, product.id);
             return this._validateDTO({
                 externalProductId: String(product.id), rawName: product.name, rawPrice: product.price,
                 minQty, maxQty, isActive: product.available !== false,
@@ -92,6 +124,10 @@ class JasserCardAdapter extends BaseProviderAdapter {
                 rawPayload: product,
             });
         });
+    }
+
+    getPublishedQuantityBounds(product) {
+        return quantityBounds(product.minQty, product.maxQty, product.externalProductId ?? product._id);
     }
 
     async getBalance() {
@@ -165,9 +201,12 @@ class JasserCardAdapter extends BaseProviderAdapter {
 
     async placeOrder(params = {}) {
         const productId = params.productId ?? params.externalProductId ?? params.providerProductId;
-        const qty = Number(params.qty ?? params.quantity ?? params.amount ?? 1);
+        const quantityValue = params.qty ?? params.quantity ?? params.amount ?? 1;
+        const qty = Number(quantityValue);
         if (!/^\d+$/.test(String(productId)) || Number(productId) <= 0) return failure('Jasser Card product ID must be a positive integer');
-        if (!Number.isSafeInteger(qty) || qty < 1) return failure('Jasser Card quantity must be a positive integer');
+        if ((typeof quantityValue !== 'number' && typeof quantityValue !== 'string')
+            || (typeof quantityValue === 'string' && !/^\+?\d+(?:\.0+)?$/.test(quantityValue.trim()))
+            || !Number.isSafeInteger(qty) || qty < 1) return failure('Jasser Card quantity must be a positive integer');
         let uuid;
         try {
             const explicitUuid = params.order_uuid ?? params.orderUuid;

@@ -69,6 +69,60 @@ describe('Jasser Card adapter', () => {
         await expect(adapter.getProducts()).rejects.toThrow('quantity rules');
     });
 
+    test.each([
+        [{ min: 500000, max: 99999999.9999 }, 500000, 99999999.9999],
+        [{ min: '1', max: '1594.75' }, 1, 1594.75],
+        [{ min: 5, max: 1537.125 }, 5, 1537.125],
+        [{ min: '2', max: '2.0001' }, 2, 2.0001],
+        [{ min: '1', max: '1e3' }, 1, 1000],
+        [['210', '110', '150'], 110, 210],
+        [null, 1, 1],
+    ])('preserves valid catalog bounds without rounding: %j', async (rules, minQty, maxQty) => {
+        const { adapter, client } = makeAdapter();
+        const product = { id: 99, name: 'Synthetic quantity fixture', price: '1', qty_values: rules };
+        client.get.mockResolvedValue({ data: [product] });
+        const [dto] = await adapter.getProducts();
+        expect(dto).toMatchObject({ minQty, maxQty, rawPayload: product });
+        expect(adapter.getPublishedQuantityBounds(dto)).toEqual({ minQty, maxQty });
+    });
+
+    test.each([
+        [{ min: 1.5, max: 100 }, 'min must be'],
+        [{ min: 0, max: 100 }, 'min must be'],
+        [{ min: true, max: 100 }, 'finite decimal'],
+        [{ min: 1, max: false }, 'finite decimal'],
+        [{ min: 1, max: '' }, 'finite decimal'],
+        [{ min: 1, max: ' ' }, 'finite decimal'],
+        [{ min: 1, max: null }, 'finite decimal'],
+        [{ min: 1, max: 'Infinity' }, 'finite decimal'],
+        [{ min: 1, max: Infinity }, 'finite decimal'],
+        [{ min: 1, max: NaN }, 'finite decimal'],
+        [{ min: 1, max: '0x10' }, 'finite decimal'],
+        [{ min: 1, max: [] }, 'finite decimal'],
+        [{ min: 1, max: {} }, 'finite decimal'],
+        [{ min: 2, max: 1.75 }, 'max must be'],
+        [{ min: 1 }, 'expected null'],
+        [{ max: 100 }, 'expected null'],
+        [{}, 'expected null'],
+        [true, 'expected null'],
+        ['1,100', 'expected null'],
+        ['{"min":1,"max":100}', 'expected null'],
+        [[1, 2.5], 'choices must be positive'],
+        [[1, false], 'finite decimal'],
+    ])('rejects invalid rules with a specific reason: %j', async (rules, reason) => {
+        const { adapter, client } = makeAdapter();
+        client.get.mockResolvedValue({ data: [{ id: 99, name: 'Invalid fixture', price: 1, qty_values: rules }] });
+        const result = adapter.getProducts();
+        await expect(result).rejects.toThrow('Invalid quantity rules for product 99:');
+        await expect(result).rejects.toThrow(reason);
+    });
+
+    test.each([1.25, 0, -1, Infinity, NaN, true, false, [], [1], {}, '0x10', '1e2', '1.25'])('never dispatches invalid purchase quantity %j', async (quantity) => {
+        const { adapter, client } = makeAdapter();
+        await expect(adapter.placeOrder({ ...params, quantity })).resolves.toMatchObject({ success: false });
+        expect(client.get).not.toHaveBeenCalled();
+    });
+
     test.each([['accept', true, 'Completed'], ['wait', true, 'Pending'], ['reject', false, 'Cancelled'], ['unexpected', true, 'Pending']])(
         'maps placement %s safely', async (status, success, providerStatus) => {
             const { adapter, client } = makeAdapter();

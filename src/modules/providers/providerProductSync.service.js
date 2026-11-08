@@ -267,6 +267,15 @@ const _performSync = async (provider, adapterOptions) => {
         }
     }
 
+    // Jasser must not deactivate existing products or publish a partial catalog
+    // when any raw upsert failed. Other suppliers retain their current behavior.
+    if (adapter.requiresCompleteCatalogSync && errors.length > 0) {
+        throw new BusinessRuleError(
+            `Provider catalog sync incomplete: ${errors.join('; ')}`,
+            'PROVIDER_CATALOG_SYNC_INCOMPLETE'
+        );
+    }
+
     // Rebuild seenExternalIds from only the successfully processed DTOs
     // (failed upserts should not contribute to the "seen" set, which could
     // incorrectly deactivate products that simply had a transient error).
@@ -288,7 +297,7 @@ const _performSync = async (provider, adapterOptions) => {
     // Only run when the response is non-empty; an empty response might indicate
     // a transient provider outage, not a genuine "no products" state.
     //
-    if (dtos.length > 0) {
+    if (dtos.length > 0 && adapter.deactivateMissingCatalogProducts !== false) {
         try {
             const deactivateResult = await ProviderProduct.updateMany(
                 {
@@ -329,8 +338,10 @@ const _performSync = async (provider, adapterOptions) => {
                     if (supplierName) updates.name = supplierName;
                     const supplierDescription = providerProduct.rawPayload?.description;
                     if (typeof supplierDescription === 'string') updates.description = supplierDescription;
-                    const supplierMinQty = Number.isSafeInteger(providerProduct.minQty) && providerProduct.minQty > 0 ? providerProduct.minQty : null;
-                    const supplierMaxQty = Number.isSafeInteger(providerProduct.maxQty) && providerProduct.maxQty > 0 ? providerProduct.maxQty : null;
+                    const customBounds = typeof adapter.getPublishedQuantityBounds === 'function'
+                        ? adapter.getPublishedQuantityBounds(providerProduct) : null;
+                    const supplierMinQty = customBounds ? customBounds.minQty : (Number.isSafeInteger(providerProduct.minQty) && providerProduct.minQty > 0 ? providerProduct.minQty : null);
+                    const supplierMaxQty = customBounds ? customBounds.maxQty : (Number.isSafeInteger(providerProduct.maxQty) && providerProduct.maxQty > 0 ? providerProduct.maxQty : null);
                     if (supplierMinQty && supplierMaxQty && supplierMaxQty >= supplierMinQty) {
                         updates.minQty = supplierMinQty;
                         updates.maxQty = supplierMaxQty;
