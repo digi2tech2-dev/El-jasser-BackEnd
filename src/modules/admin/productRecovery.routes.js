@@ -13,5 +13,6 @@ router.get('/search', catchAsync(async (req, res) => sendSuccess(res, await reco
     search: req.query.search, providerId: req.query.providerId, sort: req.query.sort,
     availability: req.query.availability, minPrice: req.query.minPrice, maxPrice: req.query.maxPrice,
     page: Number(req.query.page || 1), limit: Number(req.query.limit || 30),
+    refresh: req.query.refresh === 'true',
 }))));
 module.exports = router;

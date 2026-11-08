@@ -8,12 +8,12 @@ const { ValidationError } = require('../../shared/errors/AppError');
 const providerCache = new Map();
 const CACHE_MS = 30 * 1000;
 
-function fetchCachedProducts(provider, adapter) {
+function fetchCachedProducts(provider, adapter, refresh = false) {
     const key = String(provider._id);
     const now = Date.now();
     const version = provider.updatedAt?.getTime() || 0;
     const cached = providerCache.get(key);
-    if (cached && cached.version === version && now - cached.loadedAt < CACHE_MS) return cached.promise;
+    if (!refresh && cached && cached.version === version && now - cached.loadedAt < CACHE_MS) return cached.promise;
     const promise = Promise.resolve().then(() => adapter.fetchProducts());
     providerCache.set(key, { version, loadedAt: now, promise });
     promise.catch(() => { if (providerCache.get(key)?.promise === promise) providerCache.delete(key); });
@@ -24,7 +24,7 @@ function fetchCachedProducts(provider, adapter) {
 
 // Read-only discovery: unlike a catalogue sync, searching must never change
 // existing provider products or their linked storefront prices.
-async function search({ search = '', providerId = '', page = 1, limit = 30, sort = 'asc', availability = 'all', minPrice = '', maxPrice = '' } = {}) {
+async function search({ search = '', providerId = '', page = 1, limit = 30, sort = 'asc', availability = 'all', minPrice = '', maxPrice = '', refresh = false } = {}) {
     const query = String(search).trim();
     if (query.length > 120 || !['asc', 'desc'].includes(sort) || !['all', 'available', 'unavailable'].includes(availability)
         || !Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
@@ -54,7 +54,7 @@ async function search({ search = '', providerId = '', page = 1, limit = 30, sort
             try {
                 const adapter = getProviderAdapter(provider, { strict: true });
                 if (adapter instanceof MockProviderAdapter) throw new Error('Mock provider is not allowed.');
-                const products = await fetchCachedProducts(provider, adapter);
+                const products = await fetchCachedProducts(provider, adapter, refresh);
                 if (!Array.isArray(products)) throw new Error('Invalid provider response.');
                 const seen = new Set();
                 for (const item of products) {
@@ -68,12 +68,18 @@ async function search({ search = '', providerId = '', page = 1, limit = 30, sort
                     const available = item.isActive === false || ['false', '0', 'inactive', 'disabled', 'off', 'unavailable'].includes(status)
                         ? false : ['true', '1', 'active', 'enabled', 'on', 'available'].includes(status) ? true : null;
                     if (availability === 'available' && available !== true || availability === 'unavailable' && available !== false) continue;
-                    const sourceCurrency = String(raw.pricingCurrency || raw.currency || raw.sourceCurrency || '').trim().toUpperCase();
-                    const price = String(item.rawPrice ?? '');
-                    let sortable = false;
-                    const rawPrice = raw.sourcePrice ?? raw.rawPrice ?? raw.price ?? raw.product_price ?? raw.rate ?? raw.cost ?? raw.base_price;
-                    try { sortable = rawPrice != null && rawPrice !== '' && sourceCurrency === 'USD' && new Decimal(price).isFinite() && new Decimal(price).gte(0); } catch { /* no confirmed price */ }
-                    if ((minimum || maximum) && (!sortable || minimum && new Decimal(price).lt(minimum) || maximum && new Decimal(price).gt(maximum))) continue;
+                    const sourceCurrency = String(raw.sourceCurrency || raw.currency || raw.pricingCurrency || '').trim().toUpperCase();
+                    // Preserve the supplier amount even when currency metadata is absent.
+                    const supplierPrice = raw.sourcePrice ?? item.rawPrice;
+                    const price = supplierPrice == null ? '' : String(supplierPrice).trim();
+                    let numericPrice = null;
+                    try {
+                        if (price) {
+                            const parsed = new Decimal(price);
+                            if (parsed.isFinite() && parsed.gte(0)) numericPrice = parsed;
+                        }
+                    } catch { /* Keep the supplier value visible even when it cannot be sorted. */ }
+                    if ((minimum || maximum) && (!numericPrice || minimum && numericPrice.lt(minimum) || maximum && numericPrice.gt(maximum))) continue;
                     const image = [raw.image, raw.image_url, raw.imageUrl, raw.product_image].find((v) => {
                         if (typeof v !== 'string') return false;
                         try {
@@ -89,8 +95,8 @@ async function search({ search = '', providerId = '', page = 1, limit = 30, sort
                         && limitRange.every((v) => Number.isSafeInteger(Number(v)) && Number(v) > 0)
                         && Number(limitRange[0]) <= Number(limitRange[1]);
                     results.push({ key: `${provider._id}:${externalId}`, providerId: String(provider._id), providerName: provider.name,
-                        externalProductId: externalId, name, price: sortable ? price : null,
-                        currency: sortable ? 'USD' : (sourceCurrency || null), available, image,
+                        externalProductId: externalId, name, price: price || null,
+                        currency: sourceCurrency || null, available, image,
                         minQty: limitsVerified ? Number(limitRange[0]) : null,
                         maxQty: limitsVerified ? Number(limitRange[1]) : null,
                         limitsVerified,
@@ -105,8 +111,15 @@ async function search({ search = '', providerId = '', page = 1, limit = 30, sort
     }
     await Promise.all(Array.from({ length: Math.min(providers.length, 4) }, () => worker()));
     results.sort((a, b) => {
-        if (a.price == null || b.price == null) return a.price == null ? (b.price == null ? a.name.localeCompare(b.name) : 1) : -1;
-        const diff = new Decimal(a.price).comparedTo(new Decimal(b.price));
+        const sortable = (value) => {
+            if (value == null || value === '') return null;
+            try { const parsed = new Decimal(value); return parsed.isFinite() && parsed.gte(0) ? parsed : null; }
+            catch { return null; }
+        };
+        const aPrice = sortable(a.price);
+        const bPrice = sortable(b.price);
+        if (!aPrice || !bPrice) return !aPrice ? (!bPrice ? a.name.localeCompare(b.name) : 1) : -1;
+        const diff = aPrice.comparedTo(bPrice);
         return (sort === 'desc' ? -diff : diff) || a.name.localeCompare(b.name) || a.key.localeCompare(b.key);
     });
     const total = results.length;
