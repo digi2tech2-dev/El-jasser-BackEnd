@@ -80,6 +80,18 @@ const updateUserSchema = Joi.object({
     }),
 }).min(1).messages({ 'object.min': 'At least one field must be provided for update' });
 
+const updateUserProductOverrideSchema = Joi.object({
+    priceOverride: Joi.any().allow(null).custom((value, helpers) => {
+        if (value === null) return value;
+        const text = String(value).trim();
+        if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(text) || !Number.isFinite(Number(text)) || Number(text) <= 0) {
+            return helpers.error('any.invalid');
+        }
+        return text;
+    }),
+    isHidden: Joi.boolean(),
+}).min(1);
+
 const listUsersQuery = Joi.object({
     ...pagination,
     limit: Joi.number().integer().min(1).max(500).default(20),
@@ -88,6 +100,7 @@ const listUsersQuery = Joi.object({
     email: Joi.string().max(128),
     search: Joi.string().trim().max(128).allow('', null),
     role: Joi.string().valid('ADMIN', 'SUPERVISOR', 'CUSTOMER'),
+    isApiEnabled: Joi.boolean(),
     from: Joi.date().iso(),
     to: Joi.date().iso().min(Joi.ref('from')),
     sortBy: Joi.string().valid('createdAt', 'walletBalance', 'name', 'email', 'status', 'role').default('createdAt'),
@@ -495,6 +508,7 @@ module.exports = {
     schemas: {
         // Users
         updateUser: updateUserSchema,
+        updateUserProductOverride: updateUserProductOverrideSchema,
         listUsersQuery,
         updateUserRole: updateUserRoleSchema,
         updateUserCurrency: updateUserCurrencySchema,

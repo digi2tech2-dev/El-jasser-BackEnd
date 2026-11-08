@@ -87,7 +87,7 @@ const calculateFinalPrice = (basePrice, percentage) => {
  *   groupId:          ObjectId
  * }>}
  */
-const calculateUserPrice = async (userId, basePrice, session = null) => {
+const calculateUserPrice = async (userId, basePrice, session = null, productId = null) => {
     // Load user with groupId populated so we get percentage in one round-trip
     const query = User.findById(userId).populate('groupId', 'name percentage isActive');
     if (session) query.session(session);
@@ -118,14 +118,22 @@ const calculateUserPrice = async (userId, basePrice, session = null) => {
 
     // basePrice is a string — ensure it's valid
     const safeBasePrice = isPositive(basePrice) ? String(basePrice) : '0';
-
-    const finalPrice = calculateFinalPrice(safeBasePrice, markupPercentage);
+    let priceOverride = null;
+    if (productId) {
+        const { getUserProductOverride } = require('../users/userProductOverride.service');
+        const override = await getUserProductOverride(userId, productId, session);
+        if (override?.priceOverride != null && String(override.priceOverride).trim() !== '') {
+            priceOverride = String(override.priceOverride);
+        }
+    }
+    const finalPrice = priceOverride ?? calculateFinalPrice(safeBasePrice, markupPercentage);
 
     return {
         basePrice: safeBasePrice,
-        markupPercentage,
+        markupPercentage: priceOverride == null ? markupPercentage : 0,
         finalPrice,
         groupId: group._id,
+        hasPriceOverride: priceOverride != null,
     };
 };
 

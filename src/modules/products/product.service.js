@@ -48,9 +48,10 @@ const getCanonicalProviderProductPrice = (providerProduct) => normalizeProviderD
  * Public-facing product list. Returns only active products for customers;
  * admins pass activeOnly=false to see everything.
  */
-const listProducts = async ({ activeOnly = true, page = 1, limit = 50 } = {}) => {
+const listProducts = async ({ activeOnly = true, page = 1, limit = 50, excludeProductIds = [] } = {}) => {
     const filter = { deletedAt: null };
     if (activeOnly) filter.isActive = true;
+    if (Array.isArray(excludeProductIds) && excludeProductIds.length) filter._id = { $nin: excludeProductIds };
     const skip = (page - 1) * limit;
 
     const [products, total] = await Promise.all([
@@ -107,6 +108,7 @@ const createProduct = async ({
     displayAccountNumber = null,
     showAccountNumber = false,
     isActive = true,
+    hideFromApi = false,
     executionType = 'manual',
     costPrice = 0,
     orderFields = [],
@@ -176,6 +178,7 @@ const createProduct = async ({
         displayAccountNumber,
         showAccountNumber,
         isActive,
+        hideFromApi,
         pricingMode,
         markupType,
         markupValue,
@@ -306,6 +309,7 @@ const publishFromProviderProduct = async ({
         displayAccountNumber,
         showAccountNumber,
         isActive,
+        hideFromApi,
         pricingMode,
         markupType,
         markupValue,
@@ -345,7 +349,7 @@ const updateProduct = async (productId, updates) => {
     if (!product) throw new NotFoundError('Product');
 
     const ALLOWED = [
-        'name', 'description', 'image', 'category', 'displayOrder', 'isActive',
+        'name', 'description', 'image', 'category', 'displayOrder', 'isActive', 'hideFromApi',
         'displayAccountNumber', 'showAccountNumber',
         'basePrice', 'minQty', 'maxQty', 'pricingMode', 'markupType', 'markupValue',
         'executionType', 'costPrice', 'orderFields', 'dynamicFields', 'providerMapping',

@@ -8,7 +8,7 @@
  */
 
 const { Setting } = require('./setting.model');
-const { NotFoundError } = require('../../shared/errors/AppError');
+const { NotFoundError, ConflictError, ValidationError } = require('../../shared/errors/AppError');
 const { createAuditLog } = require('../audit/audit.service');
 const { ADMIN_ACTIONS, ENTITY_TYPES, ACTOR_ROLES } = require('../audit/audit.constants');
 const settingsCache = require('./settings.cache');
@@ -22,6 +22,7 @@ const PAYMENT_SETTING_KEYS = new Set([
     'paymentCountryAccounts',
     'paymentInstructions',
     'whatsappNumber',
+    'supportContacts',
 ]);
 
 // ─── List ──────────────────────────────────────────────────────────────────────
@@ -67,6 +68,7 @@ const getPaymentSettings = async () => {
         countryAccounts: find('paymentCountryAccounts') || [],
         instructions: find('paymentInstructions') || '',
         whatsappNumber: find('whatsappNumber') || '',
+        supportContacts: find('supportContacts') || { entries: [], revision: 0 },
     };
 
     return settingsCache.set(cacheKey, payload);
@@ -90,6 +92,25 @@ const updateSetting = async (key, value, adminId) => {
     if (!setting) throw new NotFoundError('Setting');
 
     const before = setting.value;
+
+    if (key === 'supportContacts') {
+        const currentRevision = Number(setting.value?.revision || 0);
+        if (!value || !Array.isArray(value.entries) || Number(value.revision) !== currentRevision) {
+            throw new ConflictError('Support contacts changed. Reload before saving.');
+        }
+        if (value.entries.length > 30 || value.entries.some((item) => !item || !String(item.name || '').trim()
+            || !String(item.role || '').trim() || !/^\+[1-9]\d{7,14}$/.test(String(item.number || '').trim()))) {
+            throw new ValidationError('Invalid support contacts.');
+        }
+        value = { entries: value.entries.map((item) => ({
+            id: String(item.id || ''), name: String(item.name).trim(), role: String(item.role).trim(), number: String(item.number).trim(),
+        })), revision: currentRevision + 1 };
+    }
+
+    if (key === 'adminNotificationWhatsApp' && value !== ''
+        && !/^\+[1-9]\d{7,14}$/.test(String(value).trim())) {
+        throw new ValidationError('Enter an international WhatsApp number.');
+    }
 
     if (key === 'paymentGroups') {
         validatePaymentGroupsFeePercent(value);

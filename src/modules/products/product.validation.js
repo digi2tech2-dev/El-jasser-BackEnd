@@ -111,6 +111,10 @@ const createProductValidation = [
         .optional()
         .isBoolean().withMessage('isActive must be a boolean'),
 
+    body('hideFromApi')
+        .optional()
+        .isBoolean().withMessage('hideFromApi must be a boolean'),
+
     body('executionType')
         .optional()
         .isIn(Object.values(EXECUTION_TYPES))
@@ -239,6 +243,10 @@ const publishProductValidation = [
         .optional()
         .isBoolean(),
 
+    body('hideFromApi')
+        .optional()
+        .isBoolean().withMessage('hideFromApi must be a boolean'),
+
     body('pricingMode')
         .optional()
         .isIn(Object.values(PRICING_MODES))
@@ -344,6 +352,10 @@ const updateProductValidation = [
     body('isActive')
         .optional()
         .isBoolean(),
+
+    body('hideFromApi')
+        .optional()
+        .isBoolean().withMessage('hideFromApi must be a boolean'),
 
     body('pricingMode')
         .optional()

@@ -8,10 +8,11 @@ const { convertUsdToUserCurrency } = require('../../services/currencyConverter.s
 const { sendSuccess, sendCreated } = require('../../shared/utils/apiResponse');
 const catchAsync = require('../../shared/utils/catchAsync');
 const { buildPublicWalletSummary } = require('../../shared/utils/walletSummary');
+const { getUserProductOverrides } = require('../users/userProductOverride.service');
 
-const toPublicProduct = async (product, reseller) => {
+const toPublicProduct = async (product, reseller, override = null) => {
     const percentage = Number(reseller.groupId?.percentage || 0);
-    const priceUsd = calculateFinalPrice(product.basePrice, percentage);
+    const priceUsd = override?.priceOverride ?? calculateFinalPrice(product.basePrice, percentage);
     const userCurrency = String(reseller.currency || 'USD').toUpperCase();
     const converted = await convertUsdToUserCurrency(Number(priceUsd), userCurrency);
 
@@ -83,12 +84,14 @@ const listProducts = catchAsync(async (req, res) => {
         });
     }
 
-    const products = await Product.find({ isActive: true, deletedAt: null })
+    const products = await Product.find({ isActive: true, deletedAt: null, hideFromApi: { $ne: true } })
         .select('name description image category minQty maxQty basePrice orderFields dynamicFields displayOrder')
         .sort({ displayOrder: 1, name: 1 })
         .lean();
 
-    const data = await Promise.all(products.map((product) => toPublicProduct(product, req.reseller)));
+    const overrides = await getUserProductOverrides(req.reseller._id, products.map((product) => product._id));
+    const visibleProducts = products.filter((product) => !overrides.get(String(product._id))?.isHidden);
+    const data = await Promise.all(visibleProducts.map((product) => toPublicProduct(product, req.reseller, overrides.get(String(product._id)) || null)));
     sendSuccess(res, data, 'Products retrieved successfully.');
 });
 
@@ -102,6 +105,11 @@ const createOrder = catchAsync(async (req, res) => {
         customInputs,
         idempotencyKey: bodyIdempotencyKey,
     } = req.body;
+
+    const apiProduct = await Product.findById(productId).select('hideFromApi');
+    if (!apiProduct || apiProduct.hideFromApi === true) {
+        return res.status(404).json({ success: false, message: 'Product not found.' });
+    }
 
     const idempotencyKey = String(bodyIdempotencyKey || req.get('idempotency-key') || '').trim();
     if (!idempotencyKey) {

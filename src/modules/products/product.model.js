@@ -243,6 +243,12 @@ const productSchema = new mongoose.Schema(
             default: true,
         },
 
+        /** Excludes this product from reseller and compatibility API catalogs. */
+        hideFromApi: {
+            type: Boolean,
+            default: false,
+        },
+
         /** Soft-delete timestamp. Null = not deleted. */
         deletedAt: {
             type: Date,

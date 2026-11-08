@@ -178,7 +178,9 @@ router.get('/stats', statsCtrl.getDashboardStats);
 // ═══════════════════════════════════════════════════════════════════════════════
 
 router.get('/users', requirePermission('VIEW_USERS'), validateQuery(schemas.listUsersQuery), usersCtrl.listUsers);
-router.get('/users/deleted', requirePermission('VIEW_USERS'), usersCtrl.listDeletedUsers); // MUST be before /:id
+router.get('/users/deleted', requirePermission('VIEW_USERS'), usersCtrl.listDeletedUsers);
+router.get('/users/:id/products', requirePermission('VIEW_USERS'), usersCtrl.listUserProducts);
+router.patch('/users/:id/products/:productId', requirePermission('MANAGE_USERS'), validateBody(schemas.updateUserProductOverride), usersCtrl.updateUserProductOverride); // MUST be before /:id
 router.post('/users/adjust-debt', adminOnly, walletLimiter, validateBody(schemas.debtAdjustment), walletCtrl.adjustDebt);
 router.get('/users/:id', requirePermission('VIEW_USERS'), usersCtrl.getUserById);
 router.patch('/users/:id', requirePermission('MANAGE_USERS'), validateBody(schemas.updateUser), usersCtrl.updateUser);

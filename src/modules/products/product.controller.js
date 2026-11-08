@@ -5,6 +5,8 @@ const { Product } = require('./product.model');
 const { getProviderAdapter } = require('../providers/adapters/adapter.factory');
 const { sendSuccess, sendCreated, sendPaginated } = require('../../shared/utils/apiResponse');
 const catchAsync = require('../../shared/utils/catchAsync');
+const { getUserProductOverrides, getUserProductOverride } = require('../users/userProductOverride.service');
+const { NotFoundError } = require('../../shared/errors/AppError');
 
 // ─── Sensitive fields that must NEVER reach non-admin clients ─────────────────
 
@@ -64,7 +66,14 @@ const listProducts = catchAsync(async (req, res) => {
     const page = parseInt(req.query.page, 10) || 1;
     const limit = Math.min(parseInt(req.query.limit, 10) || 500, 500);
 
-    const { products, pagination } = await productService.listProducts({ activeOnly, page, limit });
+    const userOverrides = activeOnly ? await getUserProductOverrides(req.user._id) : new Map();
+    const hiddenProductIds = [...userOverrides.values()].filter((row) => row.isHidden).map((row) => row.productId);
+    const { products, pagination } = await productService.listProducts({ activeOnly, page, limit, excludeProductIds: hiddenProductIds });
+
+    for (const product of products) {
+        const override = userOverrides.get(String(product._id));
+        if (override?.priceOverride != null) product.finalPrice = String(override.priceOverride);
+    }
 
     // Apply group markup for non-admin users
     if (activeOnly && req.user.groupId) {
@@ -75,6 +84,8 @@ const listProducts = catchAsync(async (req, res) => {
         if (markup > 0) {
             const { computeMarkup } = require('../../shared/utils/decimalPrecision');
             for (const product of products) {
+                const override = userOverrides.get(String(product._id));
+                if (override?.priceOverride != null) continue;
                 const base = String(product.finalPrice || product.basePrice || '0');
                 product.finalPrice = computeMarkup(base, 'percentage', markup);
             }
@@ -91,6 +102,11 @@ const listProducts = catchAsync(async (req, res) => {
 const getProduct = catchAsync(async (req, res) => {
     const isAdmin = req.user?.role === 'ADMIN';
     const product = await productService.getProductById(req.params.id, { activeOnly: !isAdmin });
+    if (!isAdmin) {
+        const override = await getUserProductOverride(req.user._id, product._id);
+        if (override?.isHidden) throw new NotFoundError('Product');
+        if (override?.priceOverride != null) product.finalPrice = String(override.priceOverride);
+    }
     const responseProduct = isAdmin ? product : sanitizeProductForCustomer(product);
     sendSuccess(res, responseProduct);
 });

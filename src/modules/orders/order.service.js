@@ -563,6 +563,11 @@ const _attemptCreateOrder = async (
         if (!product.isActive) {
             throw new BusinessRuleError('This product is currently unavailable.', 'PRODUCT_INACTIVE');
         }
+        const { getUserProductOverride } = require('../users/userProductOverride.service');
+        const userProductOverride = await getUserProductOverride(userId, product._id, session);
+        if (userProductOverride?.isHidden) {
+            throw new BusinessRuleError('This product is not available for this account.', 'PRODUCT_HIDDEN_FOR_USER');
+        }
 
         // ── 2. Validate Quantity Bounds ────────────────────────────────────────
         const qty = parseInt(quantity, 10);
@@ -834,7 +839,7 @@ const _attemptCreateOrder = async (
         // ── END Quantity-Only Branch ─────────────────────────────────────────
 
         // ── 3. Pricing Engine (USD) ────────────────────────────────────────────
-        const pricing = await calculateUserPrice(userId, product.basePrice, session);
+        const pricing = await calculateUserPrice(userId, product.basePrice, session, product._id);
         const usdTotalPrice = multiply(pricing.finalPrice, String(qty));
 
         // ── 3a. Profit Calculation (USD) ────────────────────────────────────────

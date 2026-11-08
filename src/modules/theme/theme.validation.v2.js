@@ -1,0 +1,284 @@
+'use strict';
+
+const { ValidationError, AppError } = require('../../shared/errors/AppError');
+const FREE_FONTS_AR = ['Cairo', 'Tajawal', 'Aref Ruqaa', 'Aref Ruqaa Ink', 'Noto Kufi Arabic', 'El Messiri'];
+const PRO_FONTS_AR = ['Noto Sans Arabic', 'Almarai', 'Changa', 'IBM Plex Sans Arabic', 'Rubik'];
+const FREE_FONTS_EN = ['Inter', 'Arial'];
+const PRO_FONTS_EN = ['Roboto', 'Poppins', 'Montserrat', 'Outfit', 'Plus Jakarta Sans'];
+const FREE_PRESETS = ['classic', 'midnight', 'warm'];
+const PRO_PRESETS = ['ocean', 'forest', 'royal', 'sunset', 'graphite',
+    'gold', 'silver', 'copper', 'ruby', 'orchid', 'aurora', 'desert', 'frost'];
+// Keep PRO template tiers compatible with the existing contract. Only these
+// templates include header, bottom navigation, and sidebar customization.
+const ULTRA_PRESETS = ['royal', 'aurora'];
+const presetDesigns = {
+    classic: { layout: [4, 3, 2, 2], logoWidth: 144 },
+    midnight: { layout: [3, 2, 2, 2], logoWidth: 144 },
+    warm: { layout: [4, 3, 2, 2], logoWidth: 144 },
+    ocean: { layout: [5, 3, 2, 2], logoWidth: 160, font: 'Noto Sans Arabic', weight: 800, buttonRadius: 12, cardRadius: 16, shadow: 'medium', neon: ['hero', 'categories'], header: ['bar', 62, 100, 0], bottomNav: ['floating', 66, 94, 18], sidebar: ['glass', 280, 96, 24] },
+    forest: { layout: [4, 2, 2, 1], logoWidth: 152, font: 'El Messiri', weight: 800, buttonRadius: 12, cardRadius: 24, shadow: 'subtle', neon: ['categories'], header: ['floating', 70, 94, 22], bottomNav: ['pill', 70, 90, 24], sidebar: ['aurora', 278, 94, 32] },
+    royal: { layout: [4, 3, 2, 2], logoWidth: 172, font: 'Changa', weight: 900, buttonRadius: 12, cardRadius: 24, shadow: 'medium', neon: ['hero', 'bestSellers'], header: ['floating', 74, 92, 28], bottomNav: ['pill', 74, 90, 28], sidebar: ['royal', 296, 96, 36] },
+    sunset: { layout: [4, 3, 2, 2], logoWidth: 160, font: 'Almarai', weight: 800, buttonRadius: 12, cardRadius: 16, shadow: 'medium', neon: ['purchase', 'hero'], header: ['floating', 68, 96, 20], bottomNav: ['floating', 68, 94, 20], sidebar: ['default', 270, 94, 24] },
+    graphite: { layout: [5, 3, 3, 2], logoWidth: 152, font: 'Noto Kufi Arabic', weight: 800, buttonRadius: 8, cardRadius: 12, shadow: 'subtle', neon: ['bestSellers'], header: ['bar', 58, 100, 0], bottomNav: ['bar', 60, 100, 0], sidebar: ['square', 274, 100, 4] },
+    gold: { layout: [4, 3, 2, 2], logoWidth: 176, font: 'Noto Kufi Arabic', weight: 900, buttonRadius: 24, cardRadius: 24, shadow: 'medium', neon: ['hero', 'categories', 'bestSellers'], header: ['floating', 76, 92, 28], bottomNav: ['pill', 76, 88, 32], sidebar: ['royal', 300, 96, 40] },
+    silver: { layout: [5, 3, 2, 2], logoWidth: 168, font: 'IBM Plex Sans Arabic', weight: 800, buttonRadius: 12, cardRadius: 16, shadow: 'medium', neon: ['categories', 'bestSellers'], header: ['bar', 66, 100, 8], bottomNav: ['floating', 68, 94, 20], sidebar: ['glass', 286, 96, 28] },
+    copper: { layout: [4, 3, 2, 2], logoWidth: 160, font: 'Aref Ruqaa Ink', weight: 800, buttonRadius: 12, cardRadius: 24, shadow: 'medium', neon: ['purchase', 'categories'], header: ['floating', 70, 94, 24], bottomNav: ['pill', 72, 90, 28], sidebar: ['rounded', 284, 94, 36] },
+    ruby: { layout: [4, 2, 2, 1], logoWidth: 160, font: 'Rubik', weight: 900, buttonRadius: 24, cardRadius: 24, shadow: 'medium', neon: ['purchase', 'hero', 'bestSellers'], header: ['floating', 72, 92, 28], bottomNav: ['pill', 72, 90, 28], sidebar: ['aurora', 292, 96, 36] },
+    orchid: { layout: [3, 3, 2, 2], logoWidth: 160, font: 'Noto Sans Arabic', weight: 800, buttonRadius: 24, cardRadius: 24, shadow: 'subtle', neon: ['hero', 'categories'], header: ['floating', 74, 90, 32], bottomNav: ['pill', 74, 90, 32], sidebar: ['glass', 286, 92, 40] },
+    aurora: { layout: [4, 3, 2, 2], logoWidth: 168, font: 'Changa', weight: 800, buttonRadius: 12, cardRadius: 24, shadow: 'medium', neon: ['hero', 'categories', 'sidebar'], header: ['floating', 74, 92, 28], bottomNav: ['pill', 74, 90, 32], sidebar: ['aurora', 296, 96, 36] },
+    desert: { layout: [4, 2, 2, 1], logoWidth: 152, font: 'El Messiri', weight: 800, buttonRadius: 12, cardRadius: 16, shadow: 'subtle', neon: ['categories'], header: ['bar', 60, 100, 4], bottomNav: ['floating', 66, 94, 20], sidebar: ['rounded', 278, 94, 32] },
+    frost: { layout: [5, 3, 3, 2], logoWidth: 160, font: 'Noto Kufi Arabic', weight: 800, buttonRadius: 12, cardRadius: 16, shadow: 'medium', neon: ['hero', 'categories'], header: ['floating', 68, 94, 24], bottomNav: ['floating', 68, 92, 20], sidebar: ['glass', 280, 94, 28] },
+};
+const palettes = {
+    classic: { light: ['#2563EB','#475569','#F59E0B','#FFFFFF','#F8FAFC','#0F172A','#475569','#CBD5E1'], dark: ['#60A5FA','#A78BFA','#FBBF24','#0F172A','#1E293B','#F8FAFC','#CBD5E1','#475569'] },
+    midnight: { light: ['#1D4ED8','#334155','#D97706','#EFF6FF','#FFFFFF','#0F172A','#475569','#CBD5E1'], dark: ['#60A5FA','#A78BFA','#FBBF24','#0B1023','#17213A','#F8FAFC','#CBD5E1','#475569'] },
+    warm: { light: ['#B45309','#92400E','#047857','#FFFBEB','#FFFFFF','#292524','#57534E','#D6D3D1'], dark: ['#FBBF24','#FDBA74','#6EE7B7','#292014','#3C2D1D','#FFF7ED','#D6D3D1','#786550'] },
+    ocean: { light: ['#0369A1','#0E7490','#0F766E','#F0F9FF','#FFFFFF','#082F49','#475569','#BAE6FD'], dark: ['#38BDF8','#67E8F9','#5EEAD4','#082F49','#164E63','#F0F9FF','#BAE6FD','#0E7490'] },
+    forest: { light: ['#15803D','#166534','#B45309','#F0FDF4','#FFFFFF','#14532D','#3F6212','#BBF7D0'], dark: ['#4ADE80','#86EFAC','#FACC15','#0F2418','#193D27','#F0FDF4','#BBF7D0','#3F6212'] },
+    royal: { light: ['#6D28D9','#7C3AED','#C026D3','#FAF5FF','#FFFFFF','#2E1065','#6B21A8','#DDD6FE'], dark: ['#C4B5FD','#A78BFA','#F0ABFC','#1E1239','#322258','#FAF5FF','#DDD6FE','#6D28D9'] },
+    sunset: { light: ['#C2410C','#BE123C','#B45309','#FFF7ED','#FFFFFF','#431407','#7C2D12','#FED7AA'], dark: ['#FB923C','#FDA4AF','#FCD34D','#2A1411','#43201A','#FFF7ED','#FED7AA','#9A3412'] },
+    graphite: { light: ['#334155','#475569','#0E7490','#F8FAFC','#FFFFFF','#0F172A','#475569','#CBD5E1'], dark: ['#E2E8F0','#94A3B8','#67E8F9','#0F172A','#1E293B','#F8FAFC','#CBD5E1','#475569'] },
+    gold: { light: ['#9A6700','#6B4E16','#B45309','#FFFCF2','#FFF4D6','#2C210C','#594B32','#D9C28E'], dark: ['#FACC15','#EAB308','#FDE68A','#1C170B','#302711','#FFF9E6','#CFC29B','#796333'] },
+    silver: { light: ['#475569','#64748B','#0E7490','#F8FAFC','#E9EEF3','#111827','#475569','#B9C3CF'], dark: ['#E2E8F0','#94A3B8','#67E8F9','#111827','#1F2937','#F8FAFC','#CBD5E1','#475569'] },
+    copper: { light: ['#9A3412','#7C2D12','#B45309','#FFFAF5','#FFF1E6','#31170E','#654838','#D8B6A1'], dark: ['#FDBA74','#FB923C','#FDE68A','#21130F','#38211A','#FFF7ED','#D6B8A7','#895841'] },
+    ruby: { light: ['#BE123C','#9F1239','#7C3AED','#FFF7F9','#FFEAF0','#3B0A1B','#6D3349','#F5B8CB'], dark: ['#FDA4AF','#FB7185','#F0ABFC','#210B16','#391322','#FFF1F2','#D8A7B8','#89344C'] },
+    orchid: { light: ['#9333EA','#7E22CE','#DB2777','#FDF8FF','#F3E8FF','#2E1065','#6B3A80','#D8B4FE'], dark: ['#E9D5FF','#C084FC','#F9A8D4','#1B1026','#301B43','#FAF5FF','#D8B4E8','#6B3A80'] },
+    aurora: { light: ['#0F766E','#0369A1','#7C3AED','#F0FDFA','#FFFFFF','#102A2B','#48615F','#99F6E4'], dark: ['#5EEAD4','#7DD3FC','#C4B5FD','#071F24','#11313A','#F0FDFA','#B7D9D8','#2C6B72'] },
+    desert: { light: ['#A16207','#9A3412','#0F766E','#FFFBF3','#FFF4DF','#33220F','#6B5037','#E7CFA7'], dark: ['#FCD34D','#FDBA74','#5EEAD4','#231B12','#392A1B','#FFF7E6','#D7C0A0','#826443'] },
+    frost: { light: ['#0E7490','#2563EB','#0891B2','#F3FAFC','#E7F5F9','#102A38','#426171','#B6DCE7'], dark: ['#67E8F9','#93C5FD','#C4B5FD','#0B1825','#152B3B','#F0F9FF','#BDD4E2','#3A6478'] },
+};
+const colorKeys = ['primary','secondary','accent','background','surface','text','mutedText','border'];
+const allowed = {
+    typography: { arabicFont: [...FREE_FONTS_AR, ...PRO_FONTS_AR], englishFont: [...FREE_FONTS_EN, ...PRO_FONTS_EN], baseSize: [14,16,18,20], bodyWeight: [400,500,600,700,800], headingWeight: [600,700,800,900] },
+    layout: { productsPerRow: [2, 3, 4, 5, 6], categoriesPerRow: [2, 3], productsPerRowMobile: [1, 2, 3], categoriesPerRowMobile: [1, 2, 3] },
+    buttons: { radius: [0,4,8,12,24], style: ['solid','outline'] },
+    cards: { radius: [0,4,8,12,16,24], shadow: ['none','subtle','medium'] },
+    navigation: { style: ['standard','compact'] },
+    freeFonts: { arabic: FREE_FONTS_AR, english: FREE_FONTS_EN }, freePresets: FREE_PRESETS, proPresets: PRO_PRESETS,
+};
+const baseTypography = { arabicFont: 'Cairo', englishFont: 'Inter', baseSize: 16, bodyWeight: 400, headingWeight: 700 };
+const baseButtons = { radius: 8, style: 'solid' };
+const baseCards = { radius: 12, shadow: 'subtle' };
+const baseNavigation = { style: 'standard' };
+const DEFAULT_MARQUEE_AR = 'بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ ﴿قُلْ إِنَّ رَبِّي يَبْسُطُ الرِّزْقَ لِمَنْ يَشَاءُ مِنْ عِبَادِهِ وَيَقْدِرُ لَهُ وَمَا أَنْفَقْتُمْ مِنْ شَيْءٍ فَهُوَ يُخْلِفُهُ وَهُوَ خَيْرُ الرَّازِقِينَ﴾ صَدَقَ اللَّهُ الْعَظِيمُ';
+const neonSections = ['purchase', 'hero', 'categories', 'bestSellers', 'sidebar'];
+const neonColors = { purchase: '#22D3EE', hero: '#A855F7', categories: '#34D399', bestSellers: '#F59E0B', sidebar: '#F472B6' };
+const baseNeon = () => ({ ...Object.fromEntries(neonSections.map((section) =>
+    [section, { enabled: false, color: neonColors[section], speed: 5 }])), categoryCards: {} });
+const chromePart = (mode) => ({
+    template: 'bar', height: 64, width: 100,
+    background: mode === 'dark' ? '#0F172A' : '#FFFFFF',
+    foreground: mode === 'dark' ? '#F8FAFC' : '#0F172A',
+    accent: mode === 'dark' ? '#60A5FA' : '#2563EB', radius: 0,
+});
+const baseChrome = () => {
+    const modes = Object.fromEntries(['light', 'dark'].map((mode) => [mode, {
+        header: chromePart(mode), bottomNav: chromePart(mode),
+    }]));
+    return { header: modes.light.header, bottomNav: modes.light.bottomNav, modes };
+};
+const baseSidebarMetrics = () => ({ width: 270, height: 100, radius: 28 });
+const validateChromePart = (value, path, templateValues, radiusValues, heightRange, widthRange) => {
+    keysOnly(value, ['template', 'height', 'width', 'background', 'foreground', 'accent', 'radius'], path);
+    if (!templateValues.includes(value.template) || !Number.isInteger(value.height)
+        || value.height < heightRange[0] || value.height > heightRange[1]
+        || !Number.isInteger(value.width) || value.width < widthRange[0] || value.width > widthRange[1]
+        || !radiusValues.includes(value.radius)) invalid(path);
+    for (const key of ['background', 'foreground', 'accent']) {
+        if (typeof value[key] !== 'string' || !/^#[0-9a-f]{6}$/i.test(value[key])) invalid(`${path}.${key}`);
+    }
+    return { template: value.template, height: value.height, width: value.width,
+        background: value.background.toUpperCase(), foreground: value.foreground.toUpperCase(),
+        accent: value.accent.toUpperCase(), radius: value.radius };
+};
+const mediaPath = /^\/uploads\/themes\/[0-9]+-[0-9a-f]{16}\.(?:jpe?g|png|webp)$/i;
+const invalid = (field) => { throw new ValidationError(`Invalid theme property: ${field}`); };
+const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+const keysOnly = (value, keys, path) => { if (!plain(value)) invalid(path); for (const key of Object.keys(value)) if (!keys.includes(key)) invalid(`${path}.${key}`); };
+const appearance = (id, mode) => ({ presetId: id, colors: Object.fromEntries(colorKeys.map((key,i) => [key,palettes[id][mode][i]])),
+    typography: { ...baseTypography }, buttons: { ...baseButtons }, cards: { ...baseCards }, navigation: { ...baseNavigation }, neon: baseNeon() });
+
+function validateAppearance(value, path) {
+    keysOnly(value, ['presetId','colors','typography','buttons','cards','navigation','neon'], path);
+    if (!Object.hasOwn(palettes,value.presetId)) invalid(`${path}.presetId`);
+    keysOnly(value.colors,colorKeys,`${path}.colors`);
+    const colors = {};
+    for (const key of colorKeys) {
+        if (typeof value.colors[key] !== 'string' || !/^#[0-9a-f]{6}$/i.test(value.colors[key])) invalid(`${path}.colors.${key}`);
+        colors[key] = value.colors[key].toUpperCase();
+    }
+    const result = { presetId: value.presetId, colors };
+    for (const section of ['typography','buttons','cards','navigation']) {
+        const sectionValue = section === 'typography' && value[section]?.bodyWeight === undefined
+            ? { ...value[section], bodyWeight: 400 } : value[section];
+        keysOnly(sectionValue,Object.keys(allowed[section]),`${path}.${section}`);
+        result[section] = {};
+        for (const [key,values] of Object.entries(allowed[section])) {
+            if (!values.includes(sectionValue[key])) invalid(`${path}.${section}.${key}`);
+            result[section][key] = sectionValue[key];
+        }
+    }
+    const neon = value.neon === undefined ? baseNeon() : value.neon;
+    keysOnly(neon, [...neonSections, 'categoryCards'], `${path}.neon`);
+    result.neon = {};
+    for (const section of neonSections) {
+        // Neon sections added in newer releases default off for stored themes
+        // created before the section existed.
+        const effect = neon[section] ?? { enabled: false, color: neonColors[section], speed: 5 };
+        keysOnly(effect, ['enabled','color','speed'], `${path}.neon.${section}`);
+        if (typeof effect.enabled !== 'boolean' || typeof effect.color !== 'string'
+            || !/^#[0-9a-f]{6}$/i.test(effect.color) || ![3,5,8,12].includes(effect.speed)) {
+            invalid(`${path}.neon.${section}`);
+        }
+        result.neon[section] = { enabled: effect.enabled, color: effect.color.toUpperCase(), speed: effect.speed };
+    }
+    const categoryCards = neon.categoryCards === undefined ? {} : neon.categoryCards;
+    if (!plain(categoryCards) || Object.keys(categoryCards).length > 100) invalid(`${path}.neon.categoryCards`);
+    result.neon.categoryCards = {};
+    for (const [categoryId, effect] of Object.entries(categoryCards)) {
+        if (!/^[a-zA-Z0-9_-]{1,80}$/.test(categoryId)
+            || ['__proto__', 'constructor', 'prototype'].includes(categoryId)) invalid(`${path}.neon.categoryCards.${categoryId}`);
+        keysOnly(effect, ['enabled', 'color', 'speed'], `${path}.neon.categoryCards.${categoryId}`);
+        if (typeof effect.enabled !== 'boolean' || typeof effect.color !== 'string'
+            || !/^#[0-9a-f]{6}$/i.test(effect.color) || ![3, 5, 8, 12].includes(effect.speed)) {
+            invalid(`${path}.neon.categoryCards.${categoryId}`);
+        }
+        result.neon.categoryCards[categoryId] = { enabled: effect.enabled, color: effect.color.toUpperCase(), speed: effect.speed };
+    }
+    return result;
+}
+
+function validateTheme(value) {
+    keysOnly(value,['schemaVersion','modes','brand','chrome','layout'],'theme');
+    if (value.schemaVersion !== 2) invalid('schemaVersion');
+    keysOnly(value.modes,['light','dark'],'modes');
+    const modes = { light: validateAppearance(value.modes.light,'modes.light'), dark: validateAppearance(value.modes.dark,'modes.dark') };
+    keysOnly(value.brand,['logoPath','logoWidth','slides','marqueeTextArabic','targetBannerPath','sidebarTemplate','sidebarMetrics'],'brand');
+    const inputLayout = value.layout === undefined ? { productsPerRow: 4, categoriesPerRow: 3 } : value.layout;
+    keysOnly(inputLayout, ['productsPerRow', 'categoriesPerRow', 'productsPerRowMobile', 'categoriesPerRowMobile'], 'layout');
+    const layout = { productsPerRow: inputLayout.productsPerRow, categoriesPerRow: inputLayout.categoriesPerRow };
+    if (![2, 3, 4, 5, 6].includes(layout.productsPerRow) || ![2, 3].includes(layout.categoriesPerRow)) invalid('layout');
+    for (const key of ['productsPerRowMobile', 'categoriesPerRowMobile']) {
+        if (inputLayout[key] !== undefined) {
+            if (![1, 2, 3].includes(inputLayout[key])) invalid(`layout.${key}`);
+            layout[key] = inputLayout[key];
+        }
+    }
+    const { logoPath,logoWidth,slides } = value.brand;
+    const targetBannerPath = value.brand.targetBannerPath === undefined ? null : value.brand.targetBannerPath;
+    const marqueeTextArabic = value.brand.marqueeTextArabic === undefined
+        ? DEFAULT_MARQUEE_AR : value.brand.marqueeTextArabic;
+    const sidebarTemplate = value.brand.sidebarTemplate === undefined ? 'default' : value.brand.sidebarTemplate;
+    const inputSidebarMetrics = value.brand.sidebarMetrics === undefined ? baseSidebarMetrics() : value.brand.sidebarMetrics;
+    keysOnly(inputSidebarMetrics, ['width', 'height', 'radius'], 'brand.sidebarMetrics');
+    const sidebarMetrics = {
+        width: inputSidebarMetrics.width,
+        height: inputSidebarMetrics.height,
+        radius: inputSidebarMetrics.radius,
+    };
+    if (!Number.isInteger(sidebarMetrics.width) || sidebarMetrics.width < 220 || sidebarMetrics.width > 360
+        || !Number.isInteger(sidebarMetrics.height) || sidebarMetrics.height < 70 || sidebarMetrics.height > 100
+        || ![0,4,8,12,16,20,24,28,32,36,40,44,48].includes(sidebarMetrics.radius)) invalid('brand.sidebarMetrics');
+    const inputChrome = value.chrome === undefined ? baseChrome() : value.chrome;
+    keysOnly(inputChrome, ['header', 'bottomNav', 'modes'], 'chrome');
+    const inputChromeModes = inputChrome.modes;
+    if (inputChromeModes !== undefined) keysOnly(inputChromeModes, ['light', 'dark'], 'chrome.modes');
+    const baseChromeModes = baseChrome().modes;
+    const chromeModes = {};
+    for (const mode of ['light', 'dark']) {
+        const modeInput = inputChromeModes?.[mode] || {};
+        keysOnly(modeInput, ['header', 'bottomNav'], `chrome.${mode}`);
+        // When mode-specific values exist, they are authoritative. The root
+        // aliases are retained only for schema-v1 clients and must not cause a
+        // light-mode edit to overwrite the dark-mode configuration.
+        const legacyInput = inputChromeModes ? {} : inputChrome;
+        chromeModes[mode] = {
+            header: validateChromePart(legacyInput.header || modeInput.header || baseChromeModes[mode].header, `chrome.${mode}.header`, ['bar', 'floating'], [0, 4, 8, 12, 16, 20, 24, 28, 32], [48, 120], [60, 100]),
+            bottomNav: validateChromePart(legacyInput.bottomNav || modeInput.bottomNav || baseChromeModes[mode].bottomNav, `chrome.${mode}.bottomNav`, ['bar', 'floating', 'pill'], [0, 4, 8, 12, 16, 20, 24, 28, 32], [48, 100], [60, 100]),
+        };
+    }
+    const chrome = { header: chromeModes.light.header, bottomNav: chromeModes.light.bottomNav, modes: chromeModes };
+    if (logoPath !== null && (typeof logoPath !== 'string' || !mediaPath.test(logoPath))) invalid('brand.logoPath');
+    if (!Number.isInteger(logoWidth) || logoWidth<80 || logoWidth>300) invalid('brand.logoWidth');
+    if (!Array.isArray(slides) || slides.length !== 4 || slides.some((slide) => slide !== null
+        && (typeof slide !== 'string' || !mediaPath.test(slide)))) invalid('brand.slides');
+    if (targetBannerPath !== null && (typeof targetBannerPath !== 'string' || !mediaPath.test(targetBannerPath))) invalid('brand.targetBannerPath');
+    if (typeof marqueeTextArabic !== 'string' || marqueeTextArabic !== marqueeTextArabic.trim()
+        || marqueeTextArabic.length < 1 || marqueeTextArabic.length > 240
+        || !/[\u0600-\u06FF]/u.test(marqueeTextArabic)
+        || /[<>\u0000-\u001F\u007F]/u.test(marqueeTextArabic)) invalid('brand.marqueeTextArabic');
+    if (!['default', 'royal', 'glass', 'aurora', 'square', 'rounded'].includes(sidebarTemplate)) invalid('brand.sidebarTemplate');
+    return { schemaVersion: 2, modes, brand: { logoPath, logoWidth, slides: [...slides], marqueeTextArabic,
+        targetBannerPath, sidebarTemplate, sidebarMetrics }, chrome, layout };
+}
+
+function preset(id) {
+    if (!Object.hasOwn(palettes,id)) invalid('presetId');
+    const design = presetDesigns[id] || presetDesigns.classic;
+    const modes = { light: appearance(id,'light'), dark: appearance(id,'dark') };
+    const [productsPerRow, categoriesPerRow, productsPerRowMobile, categoriesPerRowMobile] = design.layout;
+    const chrome = baseChrome();
+    const configuration = {
+        schemaVersion: 2,
+        modes,
+        brand: { logoPath: null, logoWidth: 144, slides: [null,null,null,null], targetBannerPath: null },
+        chrome,
+        layout: { productsPerRow, categoriesPerRow, productsPerRowMobile, categoriesPerRowMobile },
+    };
+
+    if (!FREE_PRESETS.includes(id)) {
+        configuration.brand.logoWidth = design.logoWidth;
+        for (const mode of ['light', 'dark']) {
+            const part = modes[mode];
+            part.typography = { ...part.typography, arabicFont: design.font, headingWeight: design.weight };
+            part.buttons = { ...part.buttons, radius: design.buttonRadius };
+            part.cards = { ...part.cards, radius: design.cardRadius, shadow: design.shadow };
+            for (const section of design.neon || []) {
+                part.neon[section] = { enabled: true, color: part.colors.accent, speed: section === 'hero' ? 8 : 5 };
+            }
+        }
+    }
+
+    if (ULTRA_PRESETS.includes(id)) {
+        const [headerTemplate, headerHeight, headerWidth, headerRadius] = design.header;
+        const [navTemplate, navHeight, navWidth, navRadius] = design.bottomNav;
+        const [sidebarTemplate, sidebarWidth, sidebarHeight, sidebarRadius] = design.sidebar;
+        for (const mode of ['light', 'dark']) {
+            const colors = modes[mode].colors;
+            chrome.modes[mode] = {
+                header: { template: headerTemplate, height: headerHeight, width: headerWidth,
+                    background: colors.surface, foreground: colors.text, accent: colors.primary, radius: headerRadius },
+                bottomNav: { template: navTemplate, height: navHeight, width: navWidth,
+                    background: colors.surface, foreground: colors.text, accent: colors.primary, radius: navRadius },
+            };
+        }
+        chrome.header = chrome.modes.light.header;
+        chrome.bottomNav = chrome.modes.light.bottomNav;
+        configuration.brand.sidebarTemplate = sidebarTemplate;
+        configuration.brand.sidebarMetrics = { width: sidebarWidth, height: sidebarHeight, radius: sidebarRadius };
+    }
+
+    return validateTheme(configuration);
+}
+
+function presetTier(id) {
+    return FREE_PRESETS.includes(id) ? 'FREE' : 'THEME_PRO';
+}
+
+function safeTheme(value) {
+    try {
+        if (value?.schemaVersion === 1) {
+            const copy = preset('classic');
+            const legacy = { presetId: value.presetId, colors: value.colors, typography: value.typography,
+                buttons: value.buttons, cards: value.cards, navigation: value.navigation };
+            copy.modes[value.mode === 'dark' ? 'dark' : 'light'] = validateAppearance(legacy,'legacy');
+            return validateTheme(copy);
+        }
+        return validateTheme(value);
+    } catch (_error) { return preset('classic'); }
+}
+
+function assertPlanAllows() { return true; }
+
+module.exports = { validateTheme,safeTheme,preset,presetTier,allowed,assertPlanAllows,FREE_PRESETS,PRO_PRESETS,ULTRA_PRESETS,DEFAULT_MARQUEE_AR };

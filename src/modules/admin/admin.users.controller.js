@@ -11,13 +11,24 @@ const catchAsync = require('../../shared/utils/catchAsync');
 const { sendSuccess, sendCreated, sendPaginated } = require('../../shared/utils/apiResponse');
 
 // GET /admin/users
+const listUserProducts = catchAsync(async (req, res) => {
+    const result = await svc.listUserProducts(req.params.id);
+    sendSuccess(res, result, 'User product settings retrieved.');
+});
+
+const updateUserProductOverride = catchAsync(async (req, res) => {
+    const result = await svc.updateUserProductOverride(req.params.id, req.params.productId, req.body, req.user._id);
+    sendSuccess(res, result, 'User product settings updated.');
+});
+
 const listUsers = catchAsync(async (req, res) => {
-    const { status, verified, email, search, role, from, to, page, limit, sortBy, sortOrder } = req.query;
+    const { status, verified, email, search, role, from, to, page, limit, sortBy, sortOrder, isApiEnabled } = req.query;
     const normalizedSortBy = typeof sortBy === 'string' && sortBy.trim() ? sortBy.trim() : 'createdAt';
     const normalizedSortOrder = String(sortOrder || '').trim().toLowerCase() === 'asc' ? 'asc' : 'desc';
     const result = await svc.listUsers({
         status,
         verified: verified !== undefined ? verified === 'true' : undefined,
+        isApiEnabled: isApiEnabled !== undefined ? isApiEnabled === 'true' : undefined,
         email,
         search,
         role,
@@ -143,6 +154,8 @@ const updateUserPermissions = catchAsync(async (req, res) => {
 
 module.exports = {
     listUsers,
+    listUserProducts,
+    updateUserProductOverride,
     listDeletedUsers,
     getUserById,
     updateUser,

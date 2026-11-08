@@ -11,6 +11,8 @@
  */
 
 const { User, USER_STATUS, ROLES } = require('../users/user.model');
+const { Product } = require('../products/product.model');
+const { UserProductOverride } = require('../users/userProductOverride.model');
 const { recalculateCreditUsed } = require('../wallet/wallet.service');
 const { NotFoundError, ConflictError, BusinessRuleError } = require('../../shared/errors/AppError');
 const { createAuditLog } = require('../audit/audit.service');
@@ -53,6 +55,7 @@ const USER_LIST_SORT_FIELDS = new Set(['createdAt', 'walletBalance', 'name', 'em
 const listUsers = async ({
     status,
     verified,
+    isApiEnabled,
     email,
     search,
     role,
@@ -78,6 +81,7 @@ const listUsers = async ({
     const filter = { deletedAt: null, verified: true };
     if (status) filter.status = status;
     if (verified != null) filter.verified = verified;
+    if (isApiEnabled != null) filter.isApiEnabled = isApiEnabled;
     if (role) filter.role = role;
     if (email) filter.email = { $regex: email, $options: 'i' };
     if (search) {
@@ -134,6 +138,60 @@ const getUserById = async (id) => {
 /**
  * Admin update of a user (name, email, groupId, status, verified).
  */
+const listUserProducts = async (userId) => {
+    const user = await User.findById(userId).select('_id name email role isApiEnabled currency');
+    if (!user) throw new NotFoundError('User');
+    const [products, overrides] = await Promise.all([
+        Product.find({ deletedAt: null }).select('name image category basePrice finalPrice isActive minQty maxQty').sort({ name: 1 }).lean(),
+        UserProductOverride.find({ userId: user._id }).lean(),
+    ]);
+    const byProductId = new Map(overrides.map((row) => [String(row.productId), row]));
+    return {
+        user: { id: user._id.toString(), name: user.name, email: user.email, isApiEnabled: user.isApiEnabled, currency: user.currency },
+        products: products.map((product) => {
+            const override = byProductId.get(String(product._id));
+            return {
+                ...product,
+                id: product._id.toString(),
+                priceOverride: override?.priceOverride ?? null,
+                isHiddenForUser: override?.isHidden === true,
+            };
+        }),
+    };
+};
+
+const updateUserProductOverride = async (userId, productId, updates, adminId) => {
+    const user = await User.findById(userId).select('_id role');
+    if (!user) throw new NotFoundError('User');
+    if (user.role !== ROLES.CUSTOMER) throw new BusinessRuleError('Per-user product settings are available for customer accounts only.', 'INVALID_USER_ROLE');
+    const product = await Product.findOne({ _id: productId, deletedAt: null }).select('_id name');
+    if (!product) throw new NotFoundError('Product');
+
+    const existing = await UserProductOverride.findOne({ userId: user._id, productId: product._id });
+    const priceOverride = updates.priceOverride !== undefined
+        ? (updates.priceOverride == null ? null : String(updates.priceOverride).trim())
+        : (existing?.priceOverride ?? null);
+    const isHidden = updates.isHidden !== undefined ? Boolean(updates.isHidden) : Boolean(existing?.isHidden);
+
+    if (priceOverride == null && !isHidden) {
+        if (existing) await existing.deleteOne();
+        return { productId: product._id.toString(), priceOverride: null, isHidden: false };
+    }
+
+    const override = await UserProductOverride.findOneAndUpdate(
+        { userId: user._id, productId: product._id },
+        { $set: { priceOverride, isHidden, updatedBy: adminId || null } },
+        { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
+    ).lean();
+
+    createAuditLog({
+        actorId: adminId, actorRole: ACTOR_ROLES.ADMIN, action: ADMIN_ACTIONS.USER_UPDATED,
+        entityType: ENTITY_TYPES.USER, entityId: user._id,
+        metadata: { operation: 'user_product_override', productId: product._id.toString(), priceOverride, isHidden },
+    });
+    return { productId: product._id.toString(), priceOverride: override.priceOverride, isHidden: override.isHidden };
+};
+
 const updateUser = async (id, data, adminId) => {
     const user = await _findOrFail(id);
     const before = user.toObject();
@@ -550,6 +608,8 @@ const updateUserPermissions = async (id, permissions, adminId) => {
 
 module.exports = {
     listUsers,
+    listUserProducts,
+    updateUserProductOverride,
     listDeletedUsers,
     getUserById,
     updateUser,

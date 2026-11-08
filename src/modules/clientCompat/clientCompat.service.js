@@ -6,6 +6,7 @@ const { Category } = require('../categories/category.model');
 const { Order } = require('../orders/order.model');
 const orderService = require('../orders/order.service');
 const { calculateFinalPrice } = require('../orders/pricing.service');
+const { getUserProductOverrides, getUserProductOverride } = require('../users/userProductOverride.service');
 const { getNextSequence } = require('../orders/counter.model');
 const { ClientCompatError, ERROR_CODES } = require('./clientCompat.errors');
 const {
@@ -148,9 +149,9 @@ const buildCategoryMaps = (categories) => {
     return { byId, byCompatId };
 };
 
-const priceProduct = async (product, reseller) => {
+const priceProduct = async (product, reseller, override = null) => {
     const percentage = Number(reseller.groupId?.percentage || 0);
-    const priceUsd = calculateFinalPrice(product.basePrice, percentage);
+    const priceUsd = override?.priceOverride ?? calculateFinalPrice(product.basePrice, percentage);
 
     return {
         priceUsd,
@@ -166,7 +167,7 @@ const listProducts = async (reseller, { productsId = '', base = false } = {}) =>
         throw new ClientCompatError('Not allowed to use API', 122, 403);
     }
 
-    const filter = { isActive: true, deletedAt: null };
+    const filter = { isActive: true, deletedAt: null, hideFromApi: { $ne: true } };
     const productIds = parseProductIds(productsId);
     if (productIds.length > 0) {
         filter.compatProductId = { $in: productIds };
@@ -180,13 +181,16 @@ const listProducts = async (reseller, { productsId = '', base = false } = {}) =>
         loadCategories(),
     ]);
 
+    const overrides = await getUserProductOverrides(reseller._id, products.map((product) => product._id));
+    const visibleProducts = products.filter((product) => !overrides.get(String(product._id))?.isHidden);
+    products.splice(0, products.length, ...visibleProducts);
     await ensureCompatIds(products, categories);
     const { byId: categoryById } = buildCategoryMaps(categories);
 
     const mapped = [];
     for (const product of products) {
         const category = getCategoryForProduct(product, categoryById);
-        const priced = await priceProduct(product, reseller);
+        const priced = await priceProduct(product, reseller, overrides.get(String(product._id)) || null);
         mapped.push(mapProduct({
             product,
             category,
@@ -215,13 +219,16 @@ const getContent = async (reseller, parentId) => {
     }
 
     const [allProducts, categories] = await Promise.all([
-        Product.find({ isActive: true, deletedAt: null })
+        Product.find({ isActive: true, deletedAt: null, hideFromApi: { $ne: true } })
             .select(PRODUCT_SELECT)
             .sort({ displayOrder: 1, name: 1 })
             .lean(),
         loadCategories(),
     ]);
 
+    const overrides = await getUserProductOverrides(reseller._id, allProducts.map((product) => product._id));
+    const visibleProducts = allProducts.filter((product) => !overrides.get(String(product._id))?.isHidden);
+    allProducts.splice(0, allProducts.length, ...visibleProducts);
     await ensureCompatIds(allProducts, categories);
     const { byId: categoryById, byCompatId: categoryByCompatId } = buildCategoryMaps(categories);
     const parentCategory = numericParentId === 0 ? null : categoryByCompatId.get(numericParentId) || null;
@@ -246,7 +253,7 @@ const getContent = async (reseller, parentId) => {
         if (!include) continue;
 
         const category = getCategoryForProduct(product, categoryById);
-        const priced = await priceProduct(product, reseller);
+        const priced = await priceProduct(product, reseller, overrides.get(String(product._id)) || null);
         products.push(mapProduct({
             product,
             category,
@@ -265,16 +272,18 @@ const getContent = async (reseller, parentId) => {
     };
 };
 
-const findProductByCompatId = async (compatProductId) => {
+const findProductByCompatId = async (compatProductId, reseller) => {
     const numericId = Number(compatProductId);
     if (!Number.isInteger(numericId) || numericId <= 0) {
         throw new ClientCompatError('Product deleted or not found', ERROR_CODES.PRODUCT_NOT_FOUND, 404);
     }
 
     const product = await Product.findOne({ compatProductId: numericId }).select(PRODUCT_SELECT);
-    if (!product || product.deletedAt) {
+    if (!product || product.deletedAt || product.hideFromApi === true) {
         throw new ClientCompatError('Product deleted or not found', ERROR_CODES.PRODUCT_NOT_FOUND, 404);
     }
+    const userOverride = reseller?._id ? await getUserProductOverride(reseller._id, product._id) : null;
+    if (userOverride?.isHidden) throw new ClientCompatError('Product deleted or not found', ERROR_CODES.PRODUCT_NOT_FOUND, 404);
     if (product.isActive === false) {
         throw new ClientCompatError('Product not available now', ERROR_CODES.PRODUCT_NOT_AVAILABLE, 400);
     }
@@ -367,7 +376,7 @@ const createCompatOrder = async ({
     fields,
     auditContext,
 }) => {
-    const product = await findProductByCompatId(compatProductId);
+    const product = await findProductByCompatId(compatProductId, reseller);
     const quantity = Number(qty);
     if (!Number.isInteger(quantity) || quantity <= 0) {
         throw new ClientCompatError('Quantity not allowed', ERROR_CODES.QUANTITY_NOT_ALLOWED, 400);
