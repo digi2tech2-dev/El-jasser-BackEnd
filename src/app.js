@@ -37,6 +37,8 @@ const uploadRoutes = require('./shared/routes/upload.routes');
 const platformThemeRoutes = require('./modules/theme/platform.routes');
 const publicThemeRoutes = require('./modules/theme/theme.routes');
 const productRecoveryRoutes = require('./modules/admin/productRecovery.routes');
+const maintenanceRoutes = require('./modules/maintenance/maintenance.routes');
+const maintenanceGate = require('./shared/middlewares/maintenanceGate');
 const { startDefaultSettingsSeed } = require('./shared/startup/defaultSettingsSeed');
 const path = require('path');
 // Preserve normal startup behavior while preventing implicit writes in safe mode.
@@ -122,7 +124,10 @@ app.use(API_PREFIX, (req, res, next) => {
     return apiLimiter(req, res, next);
 });
 
-app.use('/client/api', compatApiLimiter, clientCompatRoutes);
+app.use('/api/maintenance', maintenanceRoutes);
+app.use(API_PREFIX, maintenanceGate);
+
+app.use('/client/api', maintenanceGate, compatApiLimiter, clientCompatRoutes);
 
 app.use(`${API_PREFIX}/auth`, authRoutes);
 app.use(`${API_PREFIX}/users`, userRoutes);

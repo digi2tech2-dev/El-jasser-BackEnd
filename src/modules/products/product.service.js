@@ -228,6 +228,7 @@ const publishFromProviderProduct = async ({
     displayAccountNumber = null,
     showAccountNumber = false,
     isActive = true,
+    hideFromApi = false,
     pricingMode = PRICING_MODES.MANUAL,
     markupType = MARKUP_TYPES.PERCENTAGE,
     markupValue = 0,
@@ -545,4 +546,3 @@ module.exports = {
     createProductFromProvider: publishFromProviderProduct,  // prompt-specified name
     toggleProduct: toggleProductStatus,                     // prompt-specified name
 };
-

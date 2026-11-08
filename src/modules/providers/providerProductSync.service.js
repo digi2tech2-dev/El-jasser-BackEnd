@@ -309,6 +309,8 @@ const _performSync = async (provider, adapterOptions) => {
     // ── 4. Push price updates to Platform Products (sync mode) ────────────────
     for (const { id: providerProductId, rawPrice } of touchedProviderProducts) {
         try {
+            const providerProduct = await ProviderProduct.findById(providerProductId)
+                .select('rawName translatedName rawPayload minQty maxQty');
             const products = await Product.find({
                 providerProduct: providerProductId,
                 pricingMode: PRICING_MODES.SYNC,
@@ -317,14 +319,24 @@ const _performSync = async (provider, adapterOptions) => {
             for (const product of products) {
                 const newFinalPrice = computeFinalPrice(rawPrice, product.markupType, product.markupValue);
                 const newBasePrice = newFinalPrice ?? String(rawPrice);
-
-                await Product.findByIdAndUpdate(product._id, {
-                    $set: {
-                        providerPrice: String(rawPrice),
-                        finalPrice: newFinalPrice,
-                        basePrice: newBasePrice,
-                    },
-                });
+                const updates = {
+                    providerPrice: String(rawPrice),
+                    finalPrice: newFinalPrice,
+                    basePrice: newBasePrice,
+                };
+                if (providerProduct) {
+                    const supplierName = providerProduct.translatedName || providerProduct.rawName;
+                    if (supplierName) updates.name = supplierName;
+                    const supplierDescription = providerProduct.rawPayload?.description;
+                    if (typeof supplierDescription === 'string') updates.description = supplierDescription;
+                    const supplierMinQty = Number.isSafeInteger(providerProduct.minQty) && providerProduct.minQty > 0 ? providerProduct.minQty : null;
+                    const supplierMaxQty = Number.isSafeInteger(providerProduct.maxQty) && providerProduct.maxQty > 0 ? providerProduct.maxQty : null;
+                    if (supplierMinQty && supplierMaxQty && supplierMaxQty >= supplierMinQty) {
+                        updates.minQty = supplierMinQty;
+                        updates.maxQty = supplierMaxQty;
+                    }
+                }
+                await Product.findByIdAndUpdate(product._id, { $set: updates });
                 pricesSynced++;
             }
         } catch (err) {

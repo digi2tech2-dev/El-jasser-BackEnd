@@ -15,4 +15,5 @@ router.get('/search', catchAsync(async (req, res) => sendSuccess(res, await reco
     page: Number(req.query.page || 1), limit: Number(req.query.limit || 30),
     refresh: req.query.refresh === 'true',
 }))));
+router.post('/publish', catchAsync(async (req, res) => sendSuccess(res, await recovery.publish(req.body.products, req.user._id))));
 module.exports = router;

@@ -2,6 +2,11 @@
 
 const Decimal = require('decimal.js');
 const { Provider } = require('../providers/provider.model');
+const { ProviderProduct } = require('../providers/providerProduct.model');
+const mongoose = require('mongoose');
+const { syncProviderProducts } = require('../providers/providerProductSync.service');
+const productService = require('../products/product.service');
+const { NotFoundError } = require('../../shared/errors/AppError');
 const { getProviderAdapter } = require('../providers/adapters/adapter.factory');
 const { MockProviderAdapter } = require('../providers/adapters/mock.adapter');
 const { ValidationError } = require('../../shared/errors/AppError');
@@ -126,4 +131,64 @@ async function search({ search = '', providerId = '', page = 1, limit = 30, sort
     return { items: results.slice((page - 1) * limit, page * limit), total, page, limit, failures };
 }
 
-module.exports = { search };
+const MAX_PUBLISH_ITEMS = 50;
+async function publish(products = [], adminUserId) {
+    if (!Array.isArray(products) || products.length < 1 || products.length > MAX_PUBLISH_ITEMS) {
+        throw new ValidationError(`Select between 1 and ${MAX_PUBLISH_ITEMS} products.`);
+    }
+    const seen = new Set();
+    for (const item of products) {
+        if (!item || !mongoose.isValidObjectId(item.providerId)
+            || typeof item.externalProductId !== 'string' || !item.externalProductId.trim() || item.externalProductId.length > 200
+            || typeof item.name !== 'string' || item.name.trim().length < 2 || item.name.trim().length > 200
+            || typeof item.image !== 'string' || !item.image.trim().startsWith('/uploads/products/') || item.image.length > 500) {
+            throw new ValidationError('Each product requires a valid supplier, ID, name and uploaded image.');
+        }
+        let markup;
+        try {
+            markup = new Decimal(item.markupValue === undefined || item.markupValue === '' ? 0 : item.markupValue);
+            if (!markup.isFinite() || markup.isNegative() || markup.gt(1000000)) throw new Error('Invalid markup');
+        } catch { throw new ValidationError('Markup must be a valid non-negative amount.'); }
+        const key = `${item.providerId}:${item.externalProductId.trim()}`;
+        if (seen.has(key)) throw new ValidationError('Duplicate products are not allowed in one request.');
+        seen.add(key);
+    }
+
+    const providerSync = new Map();
+    for (const providerId of new Set(products.map((item) => String(item.providerId)))) {
+        try {
+            await syncProviderProducts(providerId);
+            providerSync.set(providerId, null);
+        } catch {
+            providerSync.set(providerId, 'تعذر تحديث بيانات المورد. تحقق من اتصال المورد ثم أعد المحاولة.');
+        }
+    }
+
+    const published = [];
+    const failed = [];
+    for (const item of products) {
+        const key = `${item.providerId}:${item.externalProductId.trim()}`;
+        try {
+            const syncError = providerSync.get(String(item.providerId));
+            if (syncError) throw new Error(syncError);
+            const providerProduct = await ProviderProduct.findOne({ provider: item.providerId, externalProductId: item.externalProductId.trim() });
+            if (!providerProduct) throw new NotFoundError('Provider product');
+            if (!providerProduct.isActive) throw new Error('المنتج غير متاح لدى المورد.');
+            const markupValue = new Decimal(item.markupValue === undefined || item.markupValue === '' ? 0 : item.markupValue).toString();
+            const sourceName = providerProduct.translatedName || providerProduct.rawName || item.name.trim();
+            const sourceDescription = typeof providerProduct.rawPayload?.description === 'string' ? providerProduct.rawPayload.description : null;
+            const product = await productService.createProductFromProvider({
+                providerProductId: providerProduct._id,
+                name: sourceName, description: sourceDescription, image: item.image.trim(),
+                minQty: providerProduct.minQty, maxQty: providerProduct.maxQty,
+                pricingMode: 'sync', markupType: 'fixed', markupValue,
+                isActive: true, executionType: 'automatic', createdBy: adminUserId,
+            });
+            published.push({ key, productId: String(product._id), name: product.name });
+        } catch (error) {
+            failed.push({ key, name: item.name.trim(), message: error?.statusCode === 409 ? 'المنتج منشور بالفعل.' : error?.message || 'تعذر تفعيل المنتج.' });
+        }
+    }
+    return { published, failed };
+}
+module.exports = { search, publish };
