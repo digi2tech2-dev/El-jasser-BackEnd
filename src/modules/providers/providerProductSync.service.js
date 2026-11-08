@@ -430,16 +430,16 @@ const syncProviderProducts = async (providerId, adapterOptions = {}) => {
 // =============================================================================
 
 /**
- * syncAllProviders(adapterOptions?)
+ * syncProvidersMatching(filter, adapterOptions)
  *
- * Iterates all active providers, calls syncProviderProducts() for each.
+ * Iterates providers selected by the caller, syncing each with the existing lock.
  * Individual failures (including SYNC_ALREADY_RUNNING) are collected and do
  * NOT abort the loop.
  *
  * @returns {Promise<Array<{ providerId, result?, error? }>>}
  */
-const syncAllProviders = async (adapterOptions = {}) => {
-    const providers = await Provider.find({ isActive: true }).select('_id');
+const syncProvidersMatching = async (filter, adapterOptions) => {
+    const providers = await Provider.find(filter).select('_id');
     const results = [];
 
     for (const p of providers) {
@@ -453,6 +453,17 @@ const syncAllProviders = async (adapterOptions = {}) => {
 
     return results;
 };
+
+// Manual bulk sync deliberately includes providers configured as manual-only.
+const syncAllProviders = (adapterOptions = {}) => syncProvidersMatching({ isActive: true }, adapterOptions);
+
+// Missing intervals on legacy records keep their previous scheduling behavior.
+// Only an explicit zero disables automatic sync; per-provider execution and locks
+// remain shared with the manual path.
+const syncAutomaticProviders = (adapterOptions = {}) => syncProvidersMatching(
+    { isActive: true, syncInterval: { $ne: 0 } },
+    adapterOptions
+);
 
 // =============================================================================
 // PUBLIC: recalcProductPrices (admin utility)
@@ -505,6 +516,7 @@ const recalcProductPrices = async (providerProductId) => {
 module.exports = {
     syncProviderProducts,
     syncAllProviders,
+    syncAutomaticProviders,
     recalcProductPrices,
     // ── Exported for tests ────────────────────────────────────────────────────
     isSyncRunning,

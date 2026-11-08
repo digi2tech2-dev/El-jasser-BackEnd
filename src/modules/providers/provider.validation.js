@@ -75,6 +75,7 @@ const createProviderValidation = [
     body('supportedFeatures')
         .optional()
         .isArray().withMessage('supportedFeatures must be an array'),
+    body('supportedFeatures.*').isString().withMessage('supportedFeatures items must be strings'),
 ];
 
 const updateProviderValidation = [
@@ -110,6 +111,7 @@ const updateProviderValidation = [
 
     body('supportedFeatures')
         .optional().isArray(),
+    body('supportedFeatures.*').isString().withMessage('supportedFeatures items must be strings'),
 ];
 
 const providerIdParamValidation = [

@@ -9,18 +9,11 @@
 
 const { Provider } = require('../providers/provider.model');
 const providerDomainService = require('../providers/provider.service');
+const { toSafeProviderDTO: redactProvider } = require('../providers/provider.dto');
 const { getProviderAdapter } = require('../providers/adapters/adapter.factory');
 const { NotFoundError, BusinessRuleError } = require('../../shared/errors/AppError');
 const { createAuditLog } = require('../audit/audit.service');
 const { ADMIN_ACTIONS, ENTITY_TYPES, ACTOR_ROLES } = require('../audit/audit.constants');
-
-const redactProvider = (provider) => {
-    const obj = provider?.toObject ? provider.toObject() : { ...(provider || {}) };
-    const hasApiToken = Boolean(obj.apiToken || obj.apiKey);
-    delete obj.apiToken;
-    delete obj.apiKey;
-    return { ...obj, hasApiToken };
-};
 
 const redactProviderForAudit = (provider) => {
     const obj = redactProvider(provider);

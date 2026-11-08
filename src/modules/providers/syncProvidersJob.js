@@ -22,7 +22,7 @@
  */
 
 const cron = require('node-cron');
-const { syncAllProviders } = require('./providerCatalog.service');
+const { syncAutomaticProviders } = require('./providerCatalog.service');
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -34,7 +34,7 @@ let _running = false;
 /**
  * runOnce(adapterOptions?)
  *
- * Execute one complete sync cycle across all active providers.
+ * Execute one automatic sync cycle, excluding manual-only providers.
  * Safe to call manually (admin trigger, testing).
  *
  * @param {Object} [adapterOptions] - forwarded to adapter factory (inject mocks in tests)
@@ -52,7 +52,7 @@ const runOnce = async (adapterOptions = {}) => {
     try {
         console.log('[SyncJob] Starting provider product sync…');
 
-        const results = await syncAllProviders(adapterOptions);
+        const results = await syncAutomaticProviders(adapterOptions);
 
         const elapsed = Date.now() - startedAt;
         let successful = 0;

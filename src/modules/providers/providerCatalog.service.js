@@ -16,11 +16,13 @@
  * Functions:
  *   syncProviderProducts(providerId, adapterOptions?)
  *   syncAllProviders(adapterOptions?)
+ *   syncAutomaticProviders(adapterOptions?) — excludes explicit syncInterval=0
  */
 
 const {
     syncProviderProducts: _syncProviderProducts,
     syncAllProviders: _syncAllProviders,
+    syncAutomaticProviders,
     recalcProductPrices,
 } = require('./providerProductSync.service');
 
@@ -61,7 +63,7 @@ const syncProviderProducts = _syncProviderProducts;
  * Iterates all active providers and syncs each one.
  * Individual provider failures are collected — one error never aborts others.
  *
- * Used by syncProvidersJob (cron) and the bulk-sync admin endpoint.
+ * Used by the bulk-sync admin endpoint; includes manual-only providers.
  *
  * @param {Object} [adapterOptions]
  * @returns {Promise<Array<{ providerId, result?, error? }>>}
@@ -71,5 +73,6 @@ const syncAllProviders = _syncAllProviders;
 module.exports = {
     syncProviderProducts,
     syncAllProviders,
+    syncAutomaticProviders,
     recalcProductPrices,
 };
