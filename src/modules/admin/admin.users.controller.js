@@ -27,8 +27,8 @@ const listUsers = catchAsync(async (req, res) => {
     const normalizedSortOrder = String(sortOrder || '').trim().toLowerCase() === 'asc' ? 'asc' : 'desc';
     const result = await svc.listUsers({
         status,
-        verified: verified !== undefined ? verified === 'true' : undefined,
-        isApiEnabled: isApiEnabled !== undefined ? isApiEnabled === 'true' : undefined,
+        verified: verified !== undefined ? (verified === true || String(verified).trim().toLowerCase() === 'true') : undefined,
+        isApiEnabled: isApiEnabled !== undefined ? (isApiEnabled === true || String(isApiEnabled).trim().toLowerCase() === 'true') : undefined,
         email,
         search,
         role,
