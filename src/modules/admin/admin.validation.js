@@ -90,6 +90,7 @@ const updateUserProductOverrideSchema = Joi.object({
         return text;
     }),
     isHidden: Joi.boolean(),
+    isHiddenFromApi: Joi.boolean(),
 }).min(1);
 
 const listUsersQuery = Joi.object({

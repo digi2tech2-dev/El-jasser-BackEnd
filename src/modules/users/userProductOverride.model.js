@@ -8,6 +8,7 @@ const userProductOverrideSchema = new mongoose.Schema({
     // A final USD unit price. Null means use the user's group pricing.
     priceOverride: { type: String, default: null, trim: true },
     isHidden: { type: Boolean, default: false },
+    isHiddenFromApi: { type: Boolean, default: false },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true });
 

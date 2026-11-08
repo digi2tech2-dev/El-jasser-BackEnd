@@ -6,7 +6,7 @@ const { Category } = require('../categories/category.model');
 const { Order } = require('../orders/order.model');
 const orderService = require('../orders/order.service');
 const { calculateFinalPrice } = require('../orders/pricing.service');
-const { getUserProductOverrides, getUserProductOverride } = require('../users/userProductOverride.service');
+const { getUserProductOverrides, getUserProductOverride, isProductHiddenFromApi } = require('../users/userProductOverride.service');
 const { getNextSequence } = require('../orders/counter.model');
 const { ClientCompatError, ERROR_CODES } = require('./clientCompat.errors');
 const {
@@ -182,7 +182,7 @@ const listProducts = async (reseller, { productsId = '', base = false } = {}) =>
     ]);
 
     const overrides = await getUserProductOverrides(reseller._id, products.map((product) => product._id));
-    const visibleProducts = products.filter((product) => !overrides.get(String(product._id))?.isHidden);
+    const visibleProducts = products.filter((product) => !isProductHiddenFromApi(overrides.get(String(product._id))));
     products.splice(0, products.length, ...visibleProducts);
     await ensureCompatIds(products, categories);
     const { byId: categoryById } = buildCategoryMaps(categories);
@@ -227,7 +227,7 @@ const getContent = async (reseller, parentId) => {
     ]);
 
     const overrides = await getUserProductOverrides(reseller._id, allProducts.map((product) => product._id));
-    const visibleProducts = allProducts.filter((product) => !overrides.get(String(product._id))?.isHidden);
+    const visibleProducts = allProducts.filter((product) => !isProductHiddenFromApi(overrides.get(String(product._id))));
     allProducts.splice(0, allProducts.length, ...visibleProducts);
     await ensureCompatIds(allProducts, categories);
     const { byId: categoryById, byCompatId: categoryByCompatId } = buildCategoryMaps(categories);
@@ -283,7 +283,7 @@ const findProductByCompatId = async (compatProductId, reseller) => {
         throw new ClientCompatError('Product deleted or not found', ERROR_CODES.PRODUCT_NOT_FOUND, 404);
     }
     const userOverride = reseller?._id ? await getUserProductOverride(reseller._id, product._id) : null;
-    if (userOverride?.isHidden) throw new ClientCompatError('Product deleted or not found', ERROR_CODES.PRODUCT_NOT_FOUND, 404);
+    if (isProductHiddenFromApi(userOverride)) throw new ClientCompatError('Product deleted or not found', ERROR_CODES.PRODUCT_NOT_FOUND, 404);
     if (product.isActive === false) {
         throw new ClientCompatError('Product not available now', ERROR_CODES.PRODUCT_NOT_AVAILABLE, 400);
     }

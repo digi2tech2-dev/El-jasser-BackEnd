@@ -155,6 +155,7 @@ const listUserProducts = async (userId) => {
                 id: product._id.toString(),
                 priceOverride: override?.priceOverride ?? null,
                 isHiddenForUser: override?.isHidden === true,
+                isHiddenFromApiForUser: override?.isHiddenFromApi === true,
             };
         }),
     };
@@ -172,24 +173,27 @@ const updateUserProductOverride = async (userId, productId, updates, adminId) =>
         ? (updates.priceOverride == null ? null : String(updates.priceOverride).trim())
         : (existing?.priceOverride ?? null);
     const isHidden = updates.isHidden !== undefined ? Boolean(updates.isHidden) : Boolean(existing?.isHidden);
+    const isHiddenFromApi = updates.isHiddenFromApi !== undefined
+        ? Boolean(updates.isHiddenFromApi)
+        : Boolean(existing?.isHiddenFromApi);
 
-    if (priceOverride == null && !isHidden) {
+    if (priceOverride == null && !isHidden && !isHiddenFromApi) {
         if (existing) await existing.deleteOne();
-        return { productId: product._id.toString(), priceOverride: null, isHidden: false };
+        return { productId: product._id.toString(), priceOverride: null, isHidden: false, isHiddenFromApi: false };
     }
 
     const override = await UserProductOverride.findOneAndUpdate(
         { userId: user._id, productId: product._id },
-        { $set: { priceOverride, isHidden, updatedBy: adminId || null } },
+        { $set: { priceOverride, isHidden, isHiddenFromApi, updatedBy: adminId || null } },
         { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
     ).lean();
 
     createAuditLog({
         actorId: adminId, actorRole: ACTOR_ROLES.ADMIN, action: ADMIN_ACTIONS.USER_UPDATED,
         entityType: ENTITY_TYPES.USER, entityId: user._id,
-        metadata: { operation: 'user_product_override', productId: product._id.toString(), priceOverride, isHidden },
+        metadata: { operation: 'user_product_override', productId: product._id.toString(), priceOverride, isHidden, isHiddenFromApi },
     });
-    return { productId: product._id.toString(), priceOverride: override.priceOverride, isHidden: override.isHidden };
+    return { productId: product._id.toString(), priceOverride: override.priceOverride, isHidden: override.isHidden, isHiddenFromApi: override.isHiddenFromApi };
 };
 
 const updateUser = async (id, data, adminId) => {

@@ -8,7 +8,7 @@ const { convertUsdToUserCurrency } = require('../../services/currencyConverter.s
 const { sendSuccess, sendCreated } = require('../../shared/utils/apiResponse');
 const catchAsync = require('../../shared/utils/catchAsync');
 const { buildPublicWalletSummary } = require('../../shared/utils/walletSummary');
-const { getUserProductOverrides } = require('../users/userProductOverride.service');
+const { getUserProductOverrides, getUserProductOverride, isProductHiddenFromApi } = require('../users/userProductOverride.service');
 
 const toPublicProduct = async (product, reseller, override = null) => {
     const percentage = Number(reseller.groupId?.percentage || 0);
@@ -90,7 +90,7 @@ const listProducts = catchAsync(async (req, res) => {
         .lean();
 
     const overrides = await getUserProductOverrides(req.reseller._id, products.map((product) => product._id));
-    const visibleProducts = products.filter((product) => !overrides.get(String(product._id))?.isHidden);
+    const visibleProducts = products.filter((product) => !isProductHiddenFromApi(overrides.get(String(product._id))));
     const data = await Promise.all(visibleProducts.map((product) => toPublicProduct(product, req.reseller, overrides.get(String(product._id)) || null)));
     sendSuccess(res, data, 'Products retrieved successfully.');
 });
@@ -108,6 +108,10 @@ const createOrder = catchAsync(async (req, res) => {
 
     const apiProduct = await Product.findById(productId).select('hideFromApi');
     if (!apiProduct || apiProduct.hideFromApi === true) {
+        return res.status(404).json({ success: false, message: 'Product not found.' });
+    }
+    const userOverride = await getUserProductOverride(req.reseller._id, productId);
+    if (isProductHiddenFromApi(userOverride)) {
         return res.status(404).json({ success: false, message: 'Product not found.' });
     }
 

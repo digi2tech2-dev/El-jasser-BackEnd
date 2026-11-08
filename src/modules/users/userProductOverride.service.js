@@ -15,4 +15,6 @@ const getUserProductOverrides = async (userId, productIds = []) => {
     return new Map(rows.map((row) => [String(row.productId), row]));
 };
 
-module.exports = { getUserProductOverride, getUserProductOverrides };
+const isProductHiddenFromApi = (override) => Boolean(override?.isHidden || override?.isHiddenFromApi);
+
+module.exports = { getUserProductOverride, getUserProductOverrides, isProductHiddenFromApi };
