@@ -352,6 +352,19 @@ const updateAdminProductSchema = Joi.object({
     finalPrice: Joi.alternatives().try(Joi.number(), Joi.string().trim()).allow(null),
 }).min(1);
 
+const validateAdminProductUpdate = async (req, res, next) => {
+    try {
+        const { allowsJasserDecimalMaximum } = require('../products/productUpdateQuantity.validation');
+        const allowDecimal = await allowsJasserDecimalMaximum(req);
+        const schema = allowDecimal
+            ? updateAdminProductSchema.fork('maxQty', () => Joi.number().min(1))
+            : updateAdminProductSchema;
+        return validateBody(schema)(req, res, next);
+    } catch (error) {
+        return next(error);
+    }
+};
+
 const listOrdersQuery = Joi.object({
     ...pagination,
     status: Joi.string().valid('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELED', 'PARTIAL', 'MANUAL_REVIEW'),
@@ -505,6 +518,7 @@ const debtAdjustmentSchema = Joi.object({
 
 module.exports = {
     validateBody,
+    validateAdminProductUpdate,
     validateQuery,
     schemas: {
         // Users

@@ -3,6 +3,7 @@
 const { body, param, query } = require('express-validator');
 const { PRICING_MODES, MARKUP_TYPES, EXECUTION_TYPES, DYNAMIC_FIELD_TYPES } = require('./product.model');
 const { isPositive } = require('../../shared/utils/decimalPrecision');
+const { allowsJasserDecimalMaximum } = require('./productUpdateQuantity.validation');
 
 /**
  * Custom validator: value must be a positive decimal (string or number).
@@ -326,7 +327,12 @@ const updateProductValidation = [
 
     body('maxQty')
         .optional()
-        .isInt({ min: 1 }).withMessage('maxQty must be >= 1'),
+        .custom(async (value, { req }) => {
+            const validator = require('validator');
+            if (validator.isInt(String(value), { min: 1 })) return true;
+            if (await allowsJasserDecimalMaximum(req)) return true;
+            throw new Error('maxQty must be an integer >= 1, or a valid Jasser Card catalog maximum');
+        }),
 
     body('category')
         .optional({ nullable: true })

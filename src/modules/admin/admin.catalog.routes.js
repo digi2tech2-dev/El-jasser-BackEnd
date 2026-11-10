@@ -32,7 +32,7 @@ const express = require('express');
 const  authenticate  = require('../../shared/middlewares/authenticate');
 const  authorize  = require('../../shared/middlewares/authorize');
 const requirePermission = require('../../shared/middlewares/requirePermission');
-const { validateBody, schemas } = require('./admin.validation');
+const { validateBody, validateAdminProductUpdate, schemas } = require('./admin.validation');
 const {
     syncProvider,
     syncAll,
@@ -81,6 +81,6 @@ router.post('/products', requirePermission('MANAGE_PRODUCTS'), validateBody(sche
 router.post('/products/from-provider', requirePermission('MANAGE_PRODUCTS'), createProductFromProvider);
 router.patch('/products/:id/toggle', requirePermission('MANAGE_PRODUCTS'), toggleProduct);
 router.delete('/products/:id', requirePermission('MANAGE_PRODUCTS'), deleteProduct);
-router.patch('/products/:id', requirePermission('MANAGE_PRODUCTS'), validateBody(schemas.updateAdminProduct), updateProduct);
+router.patch('/products/:id', requirePermission('MANAGE_PRODUCTS'), validateAdminProductUpdate, updateProduct);
 
 module.exports = router;

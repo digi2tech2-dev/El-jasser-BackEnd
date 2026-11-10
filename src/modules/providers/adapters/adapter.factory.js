@@ -299,4 +299,12 @@ const registerAdapter = (providerKey, AdapterClass) => {
     registry.set(providerKey.toLowerCase().trim(), AdapterClass);
 };
 
-module.exports = { getAdapter, getProviderAdapter, registerAdapter };
+// Resolve identity without constructing an HTTP client or requiring credentials.
+const isJasserCardProvider = (provider) => {
+    const keys = [provider?.adapterType, provider?.slug, provider?.name];
+    const AdapterClass = keys.map((key) => registry.get(String(key ?? '').toLowerCase().trim()))
+        .find(Boolean);
+    return AdapterClass === JasserCardAdapter;
+};
+
+module.exports = { getAdapter, getProviderAdapter, registerAdapter, isJasserCardProvider };
